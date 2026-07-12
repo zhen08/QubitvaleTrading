@@ -1,0 +1,61 @@
+# QubitvaleTrading 全局配置（Phase 0）
+project: QubitvaleTrading
+store_dir: data/store
+
+# ---- 历史数据回填（Binance Vision，免费官方批量数据）----
+symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+markets: [spot, um]          # um = USDT-M 永续合约
+timeframes: [1h, 4h, 1d]
+start_month: "2019-01"       # 各币种实际起点自动探测（上市前月份 404 会被记录并跳过）
+funding_start_month: "2019-09"
+download_workers: 12
+
+# ---- Bitget 实时源（CCXT，公共端点无需密钥）----
+bitget:
+  spot_symbols: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+  swap_symbols: ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]
+  funding_history_pages: 5   # 每页 100 条，5 页 ≈ 166 天（8h 结算）
+
+# ---- 新闻采集 ----
+news:
+  rss_feeds:
+    coindesk: "https://www.coindesk.com/arc/outboundfeeds/rss/"
+    cointelegraph: "https://cointelegraph.com/rss"
+    theblock: "https://www.theblock.co/rss.xml"
+    wublockchain: "https://wublock.substack.com/feed"
+  gdelt_query: "(bitcoin OR ethereum OR cryptocurrency OR stablecoin)"
+  gdelt_timespan: "12h"
+  gdelt_maxrecords: 100
+
+# ---- Phase 2 模拟盘 ----
+paper:
+  initial_capital_usdt: 10000
+  start_date: "2026-07-12"        # UTC
+  fee_bps_side: 10                # 现货 taker（保守；BGB 抵扣可到 8）
+  slip_floor_bps: 1.0
+  rebalance_threshold: 0.02       # |目标-当前| 权重差超过 2% 才调仓（控制漂移换手）
+  min_trade_usdt: 10
+  strategy: donchian_ensemble     # 部署形态：4 参数集成 × 3 币等权，现货长平
+
+intel:
+  event_gate_lookahead_hours: 36  # 事件前 36h 起禁开新仓（日频粒度下覆盖"前2h"精神）
+  event_gate_cooldown_hours: 1    # 事件后 1h 解除
+  risk_flag_no_add_severity: 4    # 负面 sev≥4：该资产禁加仓
+  risk_flag_halve_severity: 5     # 负面 sev≥5：该资产目标减半
+  scorer_max_items: 80
+  scorer_window_hours: 48
+
+# ---- 数据质检门槛（Phase 0 放行标准，来自调研报告 §6.6）----
+qc:
+  max_missing_pct: 0.2           # 每条 K 线序列缺口率上限（%）
+  max_dup: 0                     # 重复时间戳
+  max_ohlc_violations: 0         # low<=min(o,c)<=max(o,c)<=high 违例
+  cross_window_days: 30          # 跨源校验窗口（最近 N 个已结算日）
+  cross_max_diff_pct: 0.5        # 任意日线收盘 vs CoinGecko/Coinbase 最大偏差（%）
+  freshness_max_age_days: 3      # 日线数据最迟允许滞后（Vision 日度文件 T+1 发布）
+
+# 跨源校验的符号映射
+cross_source:
+  BTCUSDT: {coingecko: bitcoin, coinbase: BTC-USD}
+  ETHUSDT: {coingecko: ethereum, coinbase: ETH-USD}
+  SOLUSDT: {coingecko: solana, coinbase: SOL-USD}

@@ -1,0 +1,21 @@
+# secrets
+.env
+
+# data store: parquet/json 数据不进 git（体积与二进制 churn），代码可随时重建
+data/store/
+!data/store/.gitkeep
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# duckdb（由 scripts/build_db.py 重建）
+*.duckdb
+*.duckdb.wal
+
+# logs
+logs/
+*.log
+_to_delete/

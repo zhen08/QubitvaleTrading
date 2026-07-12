@@ -1,0 +1,14 @@
+# 宏观事件日历（Phase 0：人工维护的最小集；Phase 1 情报层会改为
+# 从官方页面自动解析：https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+# 与 https://www.bls.gov/schedule/news_release/cpi.htm）
+#
+# 用途：风控事件门（事件前 2h 至后 1h 禁开新仓，见报告 §7.1）。
+# 时间一律 UTC。只录入已从官方/多源核实的近期事件；未核实的不要写。
+
+events:
+  - name: "US CPI (June data)"
+    kind: cpi
+    utc: "2026-07-14T12:30:00Z"   # 08:30 ET，来源：BLS 发布日程（已在 2026-07-12 日报中交叉核实）
+  - name: "FOMC rate decision"
+    kind: fomc
+    utc: "2026-07-29T18:00:00Z"   # 会期 2026-07-28/29，决议 14:00 ET
