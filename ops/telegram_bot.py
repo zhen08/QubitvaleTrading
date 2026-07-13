@@ -41,6 +41,7 @@ HELP = (
     "/pnl — per-book PnL, return, fees, trade counts\n"
     "/signal — latest target weights (decision) per book\n"
     "/risk — current news risk flags\n"
+    "/etf — US spot ETF net-flow gate (BTC/ETH)\n"
     "/help — this message"
 )
 
@@ -155,6 +156,11 @@ def cmd_risk(settings: dict) -> str:
                                            ensure_ascii=False, indent=1)
 
 
+def cmd_etf(settings: dict) -> str:
+    from intel.etf_flows import etf_summary
+    return etf_summary(settings)
+
+
 def handle(cmd: str, args: list[str], settings: dict, store) -> str:
     if cmd in ("help", "start"):
         return HELP
@@ -170,6 +176,8 @@ def handle(cmd: str, args: list[str], settings: dict, store) -> str:
         return cmd_signal(settings, store)
     if cmd == "risk":
         return cmd_risk(settings)
+    if cmd == "etf":
+        return cmd_etf(settings)
     return f"unknown command /{cmd}\n\n{HELP}"
 
 

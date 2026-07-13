@@ -52,6 +52,11 @@ intel:
   scorer_window_hours: 48
   scorer_rss_reserve: 40          # guarantee curated RSS >= min(this, available) slots so the GDELT firehose can't crowd it out
   scorer_dedup_jaccard: 0.6       # near-duplicate collapse: merge headlines with >= this token-overlap (keeps RSS copy)
+  # ---- ETF-flow gate (BTC/ETH US spot ETFs; SOL has no ETF) — risk-off only, restricts adds ----
+  etf_lookback_days: 5            # trailing window (settled days) for the net-flow regime
+  etf_min_days: 3                 # need >= this many days in window, else no gate for that asset
+  etf_outflow_no_add_usd_m: 300   # trailing net outflow >= $300M -> block adds for that asset
+  etf_outflow_trim_usd_m: 1000    # trailing net outflow >= $1000M -> halve that asset's target
 
 # ---- 数据质检门槛（Phase 0 放行标准，来自调研报告 §6.6）----
 qc:

@@ -12,9 +12,10 @@ import json
 import logging
 
 from data import storeio
-from data.collectors import binance_vision, gdelt, news_rss
+from data.collectors import binance_vision, etf_flows, gdelt, news_rss
 from data.collectors.common import load_settings, setup_logging
 from execution.paper.engine import run_daily
+from intel.etf_flows import etf_oneline
 from intel.news_scorer import refresh_risk_flags
 from ops import incident_log, telegram
 
@@ -45,6 +46,11 @@ def main() -> None:
             refresh_risk_flags(settings)
         except Exception as exc:  # noqa: BLE001
             incident_log.record(store, "P2", "news_step_failed", str(exc))
+        # ETF flows (BTC/ETH). Best-effort & non-fatal — missing key/data just leaves the gate idle.
+        try:
+            etf_flows.collect(settings)
+        except Exception as exc:  # noqa: BLE001
+            incident_log.record(store, "P3", "etf_flows_failed", str(exc))
 
     # 3) 信号 + 各账本调仓
     summary = run_daily(settings)
@@ -63,6 +69,9 @@ def main() -> None:
                      f"{pos} | live {len(bs.get('live_trades', []))}")
         for n in bs.get("notes", [])[:3]:
             lines.append(f"  · {n}")
+    etf_line = etf_oneline(settings)
+    if etf_line:
+        lines.append(etf_line)
     lines.append(f"incidents: {len(summary.get('incidents', []))}")
     telegram.send("\n".join(lines))
 

@@ -1,0 +1,99 @@
+"""ETF-flow risk gate: regime detection (as-of) and engine integration (adds-only)."""
+import pandas as pd
+
+from data import storeio
+from execution.paper.engine import _apply_risk_rules
+from intel.etf_flows import etf_gate_asof
+
+# A clear timestamp: outside every config/calendar.yaml event window (CPI 07-14, FOMC 07-29),
+# so the event gate never interferes with these tests.
+CLEAR = pd.Timestamp("2026-09-15T00:10:00Z")
+
+
+def _settings(tmp_path) -> dict:
+    return {
+        "store_dir": str(tmp_path),
+        "intel": {"etf_lookback_days": 5, "etf_min_days": 3,
+                  "etf_outflow_no_add_usd_m": 300, "etf_outflow_trim_usd_m": 1000},
+    }
+
+
+def _write_flows(tmp_path, records: list[tuple]) -> None:
+    """records: (asset, 'YYYY-MM-DD', net_flow_usd_m)."""
+    df = pd.DataFrame([{"asset": a, "date": pd.Timestamp(d, tz="UTC"),
+                        "net_flow_usd_m": v, "price_usd": 0.0, "fetched_at": "x"}
+                       for a, d, v in records])
+    storeio.write_parquet(df, storeio.etf_flows_path(storeio.store_dir({"store_dir": str(tmp_path)})))
+
+
+def test_no_data_means_empty_gate(tmp_path):
+    assert etf_gate_asof(_settings(tmp_path), CLEAR) == {}
+
+
+def test_sustained_outflow_blocks_and_severe_halves(tmp_path):
+    _write_flows(tmp_path, [
+        ("BTC", "2026-09-11", -100), ("BTC", "2026-09-12", -80),
+        ("BTC", "2026-09-13", -90),  ("BTC", "2026-09-14", -60),   # 5d net -330 -> block
+        ("BTC", "2026-09-10", 0),
+        ("ETH", "2026-09-11", -300), ("ETH", "2026-09-12", -300),
+        ("ETH", "2026-09-13", -300), ("ETH", "2026-09-14", -200),  # 5d net -1100 -> halve
+        ("ETH", "2026-09-10", 0),
+    ])
+    g = etf_gate_asof(_settings(tmp_path), CLEAR)
+    assert g["BTCUSDT"]["action"] == "block" and g["BTCUSDT"]["net_usd_m"] == -330.0
+    assert g["ETHUSDT"]["action"] == "halve"
+
+
+def test_inflows_do_not_gate(tmp_path):
+    _write_flows(tmp_path, [("BTC", f"2026-09-1{i}", 200) for i in range(5)])
+    assert etf_gate_asof(_settings(tmp_path), CLEAR)["BTCUSDT"]["action"] is None
+
+
+def test_insufficient_days_omitted(tmp_path):
+    _write_flows(tmp_path, [("BTC", "2026-09-13", -500), ("BTC", "2026-09-14", -500)])  # only 2 < min 3
+    assert "BTCUSDT" not in etf_gate_asof(_settings(tmp_path), CLEAR)
+
+
+def test_sol_never_gated(tmp_path):
+    _write_flows(tmp_path, [("SOL", f"2026-09-1{i}", -999) for i in range(5)])
+    assert etf_gate_asof(_settings(tmp_path), CLEAR) == {}
+
+
+def test_asof_only_uses_past_days(tmp_path):
+    # Heavy outflows land AFTER the as-of day -> must not affect the earlier decision.
+    _write_flows(tmp_path, [
+        ("BTC", "2026-09-05", 50), ("BTC", "2026-09-06", 50), ("BTC", "2026-09-07", 50),
+        ("BTC", "2026-09-13", -900), ("BTC", "2026-09-14", -900),
+    ])
+    early = etf_gate_asof(_settings(tmp_path), pd.Timestamp("2026-09-07T00:10:00Z"))
+    assert early["BTCUSDT"]["action"] is None            # only the +150 inflows are visible
+    late = etf_gate_asof(_settings(tmp_path), CLEAR)
+    assert late["BTCUSDT"]["action"] == "halve"          # now the outflows count
+
+
+def test_gate_restricts_adds_only_never_exits(tmp_path):
+    _write_flows(tmp_path, [
+        ("BTC", "2026-09-11", -200), ("BTC", "2026-09-12", -200),
+        ("BTC", "2026-09-13", -200), ("BTC", "2026-09-14", -200),   # -800 -> block (>=300, <1000)
+    ])
+    s = _settings(tmp_path)
+    benign = {"asset_neg_severity": {}, "market_neg_severity": 0}
+
+    # want to ADD BTC (target 0.3 > current 0.1) -> capped to current
+    adj, notes = _apply_risk_rules({"BTCUSDT": 0.3}, {"BTCUSDT": 0.1}, s, CLEAR, benign, False)
+    assert adj["BTCUSDT"] == 0.1 and any("no add BTCUSDT" in n for n in notes)
+
+    # want to REDUCE BTC (target 0.05 < current 0.2) -> exit always allowed, untouched
+    adj2, _ = _apply_risk_rules({"BTCUSDT": 0.05}, {"BTCUSDT": 0.2}, s, CLEAR, benign, False)
+    assert adj2["BTCUSDT"] == 0.05
+
+
+def test_halve_cuts_position(tmp_path):
+    _write_flows(tmp_path, [
+        ("ETH", "2026-09-11", -300), ("ETH", "2026-09-12", -300),
+        ("ETH", "2026-09-13", -300), ("ETH", "2026-09-14", -300),   # -1200 -> halve
+    ])
+    s = _settings(tmp_path)
+    benign = {"asset_neg_severity": {}, "market_neg_severity": 0}
+    adj, notes = _apply_risk_rules({"ETHUSDT": 0.3}, {"ETHUSDT": 0.2}, s, CLEAR, benign, False)
+    assert abs(adj["ETHUSDT"] - 0.1) < 1e-9 and any("halve ETHUSDT" in n for n in notes)

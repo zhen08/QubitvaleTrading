@@ -19,6 +19,7 @@ import pandas as pd
 
 from data import storeio
 from execution.paper.ledger import Ledger
+from intel.etf_flows import etf_gate_asof
 from intel.event_gate import entries_blocked
 from intel.news_scorer import load_flags_asof, load_risk_flags
 from ops import incident_log
@@ -127,6 +128,19 @@ def _apply_risk_rules(targets: dict[str, float], current_w: dict[str, float],
         for s in adj:
             adj[s] = min(adj[s], current_w.get(s, 0.0))
         notes.append(f"event_gate: no new entries ({why})")
+
+    # ETF-flow gate (BTC/ETH only; SOL has no US spot ETF): sustained net outflows
+    # restrict adds. Applied before the news early-return so a 'halve' still fires
+    # even when news flags are stale. Empty (no data / no key) => no effect.
+    for s, g in etf_gate_asof(settings, now).items():
+        if s not in adj:
+            continue
+        if g["action"] == "halve":
+            adj[s] = min(adj[s], current_w.get(s, 0.0)) * 0.5
+            notes.append(f"etf_flow {g['net_usd_m']:+.0f}M/{g['days']}d: halve {s}")
+        elif g["action"] == "block" and adj[s] > current_w.get(s, 0.0):
+            adj[s] = current_w.get(s, 0.0)
+            notes.append(f"etf_flow {g['net_usd_m']:+.0f}M/{g['days']}d: no add {s}")
 
     if flags_unknown:
         for s in adj:

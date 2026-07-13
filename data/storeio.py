@@ -40,6 +40,10 @@ def news_path(store: Path, name: str) -> Path:
     return store / "news" / f"{name}.parquet"
 
 
+def etf_flows_path(store: Path) -> Path:
+    return store / "etf" / "flows.parquet"
+
+
 def write_parquet(df: pd.DataFrame, path: Path) -> None:
     """原子写（R4）：tmp + os.replace，避免半写文件破坏数据仓。"""
     import os
