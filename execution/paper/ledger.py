@@ -198,10 +198,14 @@ class Ledger:
         _atomic_parquet(df, self.dir / "equity.parquet")
         return eq
 
-    def equity_series(self) -> pd.Series:
+    def equity_series(self, settled_only: bool = False) -> pd.Series:
+        """settled_only=True 只取 note=='settled' 的日度权益（第二轮 review：
+        intraday 标记不得混入日度统计样本）。"""
         df = self._read("equity.parquet")
         if df is None or not len(df):
             return pd.Series(dtype=float)
+        if settled_only and "note" in df.columns:
+            df = df[df["note"] == "settled"]
         return pd.Series(df["equity"].to_numpy(),
                          index=pd.to_datetime(df["day"], utc=True)).sort_index()
 

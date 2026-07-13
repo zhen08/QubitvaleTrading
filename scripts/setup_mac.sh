@@ -40,7 +40,10 @@ launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load "$PLIST"
 echo "launchd installed: com.qubitvale.paperdaily (daily 08:10 local; runs on wake if missed)"
 
-# 3) 试跑
+# 3) 冻结期望带基准（只在首次；已冻结则跳过）——6 周 gate 的口径自此固定
+./.venv/bin/python -m scripts.freeze_baseline || true
+
+# 4) 试跑
 ./.venv/bin/python -m scripts.run_paper_daily || {
   echo "!! first run failed — check logs/paper.log"; exit 1; }
 echo "OK. 每日日志: $REPO/logs/paper.log ；状态: ./.venv/bin/python -m scripts.paper_status"

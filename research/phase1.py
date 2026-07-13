@@ -137,12 +137,16 @@ def run_all() -> tuple[pd.DataFrame, dict, dict, pd.DataFrame]:
         port_rows.append({"family": family, **metrics.summary(port_series[family], "1d")})
     var_n4 = metrics.trials_sr_variance(pd.DataFrame(port_series))
 
-    # 组合级试验宇宙：每个 (族, 参数) 的跨币等权组合共 32 条 → N=32 的保守校正
+    # 组合级试验宇宙：每个 (族, 参数) 的跨币等权组合共 32 条 → N=32 的保守校正。
+    # 第二轮 review 修正：试验方差必须与认证对象同一 OOS 时间窗口（去掉前 730 根
+    # 训练 warmup 段），否则窗口不匹配使方差失真。
+    TRAIN_BARS = 730
     param_ports = {}
     symbols = list(spot_vr)
     for family in GRIDS:
         for col in spot_vr[symbols[0]][family].columns:
-            legs = pd.concat({s: spot_vr[s][family][col] for s in symbols}, axis=1).dropna()
+            legs = pd.concat({s: spot_vr[s][family][col].iloc[TRAIN_BARS:]
+                              for s in symbols}, axis=1).dropna()
             param_ports[f"{family}:{col}"] = legs.mean(axis=1)
     var_n32 = metrics.trials_sr_variance(pd.DataFrame(param_ports))
 

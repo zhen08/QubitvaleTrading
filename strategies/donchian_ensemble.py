@@ -39,10 +39,14 @@ def symbol_weight_series(df: pd.DataFrame) -> pd.Series:
 
 
 def compute_weights(dfs: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """全历史目标权重表：index=决策日（UTC 00:00），columns=symbols。"""
+    """全历史目标权重表：index=决策日（UTC 00:00），columns=symbols。
+
+    P1 修复（2026-07-13 第二轮 review）：外连接产生的 NaN **保留**，不再 fillna(0)。
+    NaN = 该资产当日无数据（≠ 信号为空仓）；若填 0 会把"缺数据"翻译成"清仓"，
+    严格检查也拦不住。NaN 的处理权交给 targets_for_day（strict 下整日拒绝）。"""
     w = pd.DataFrame({sym: symbol_weight_series(df) for sym, df in dfs.items()})
     w.index = w.index.normalize()
-    return w.fillna(0.0)
+    return w
 
 
 def refresh_signals(settings: dict, dfs: dict[str, pd.DataFrame] | None = None) -> pd.DataFrame:
@@ -83,10 +87,15 @@ def targets_for_day(weights: pd.DataFrame, day: pd.Timestamp,
     strict=False 仅供离线分析。"""
     decision_day = day.normalize() - pd.Timedelta(days=1)
     if decision_day in weights.index:
-        return {k: float(v) for k, v in weights.loc[decision_day].items()}
+        row = weights.loc[decision_day]
+        if row.isna().any():
+            if strict:      # 任一资产缺 D-1 数据 → 整日信号无效（P1 修复）
+                return None
+            row = row.fillna(0.0)
+        return {k: float(v) for k, v in row.items()}
     if strict:
         return None
     earlier = weights.loc[:decision_day]
     if len(earlier):
-        return {k: float(v) for k, v in earlier.iloc[-1].items()}
+        return {k: float(v) for k, v in earlier.iloc[-1].fillna(0.0).items()}
     return {k: 0.0 for k in weights.columns}

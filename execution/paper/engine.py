@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from contextlib import contextmanager
 
 import pandas as pd
 
@@ -29,6 +31,48 @@ log = logging.getLogger("qvt.paper")
 
 CCXT_SYMBOL = {"BTCUSDT": "BTC/USDT", "ETHUSDT": "ETH/USDT", "SOLUSDT": "SOL/USDT"}
 NOMINAL_EXEC_UTC = pd.Timedelta(minutes=10)   # catchup 回放风控时假定的名义执行时刻 00:10
+
+
+@contextmanager
+def _exclusive_lock(path):
+    """整个 run_daily 生命周期的进程级独占锁（第二轮 review P2：原子写只防半文件，
+    不防两个重叠任务的丢失更新）。flock 随进程退出自动释放，无陈锁问题。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(path, "w", encoding="utf-8")
+    try:
+        import fcntl
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            f.close()
+            yield False
+            return
+        f.write(str(os.getpid()))
+        f.flush()
+        try:
+            yield True
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+            f.close()
+    except ImportError:  # 非 POSIX 平台：无锁降级并警告
+        log.warning("fcntl unavailable — running WITHOUT concurrency lock")
+        try:
+            yield True
+        finally:
+            f.close()
+
+
+def _missing_decision_bars(dfs: dict[str, pd.DataFrame], decision_day: pd.Timestamp) -> list[str]:
+    """P1 修复：逐资产验证 D-1 决策 bar 存在且 OHLC 非空。返回缺失的 symbol 列表。"""
+    missing = []
+    for sym, df in dfs.items():
+        if decision_day not in df.index:
+            missing.append(sym)
+            continue
+        row = df.loc[decision_day]
+        if pd.isna(row.get("close")) or pd.isna(row.get("open")):
+            missing.append(sym)
+    return missing
 
 
 # ---------------- 行情 ----------------
@@ -149,6 +193,17 @@ def _rebalance(led: Ledger, targets: dict[str, float], quotes: dict[str, dict],
 # ---------------- 主流程 ----------------
 
 def run_daily(settings: dict, now: pd.Timestamp | None = None) -> dict:
+    """公共入口：独占锁内执行；已有运行在进行时优雅跳过（不视为事故）。"""
+    store = storeio.store_dir(settings)
+    with _exclusive_lock(store / "paper" / ".run.lock") as acquired:
+        if not acquired:
+            log.warning("another run_daily holds the lock — skipping this invocation")
+            return {"skipped": "another run in progress",
+                    "date": str((now or pd.Timestamp.now(tz='UTC')).date())}
+        return _run_daily_locked(settings, now)
+
+
+def _run_daily_locked(settings: dict, now: pd.Timestamp | None = None) -> dict:
     now = now or pd.Timestamp.now(tz="UTC")
     today = now.normalize()
     store = storeio.store_dir(settings)
@@ -191,9 +246,13 @@ def run_daily(settings: dict, now: pd.Timestamp | None = None) -> dict:
             bars[s] = {"open": float(df.loc[day, "open"]), "close": float(df.loc[day, "close"])}
 
         if not led.run_completed(dstr):
-            targets = targets_for_day(weights, day, strict=True)
+            miss = _missing_decision_bars(dfs, day - pd.Timedelta(days=1))
+            targets = None if miss else targets_for_day(weights, day, strict=True)
             if targets is None:
-                incident("P1", "signal_missing", f"{dstr}: no D-1 decision bar", dstr)
+                incident("P1", "catchup_signal_missing",
+                         f"{dstr}: D-1 bar missing for {miss or 'combined index'} — "
+                         "rebalance skipped (positions carried)", dstr)
+                led.record_run(dstr, "skipped", 0, note=f"missing={miss}")
             else:
                 # R6: catchup 也回放该时点的事件门与历史 risk_flags
                 asof = day + NOMINAL_EXEC_UTC
@@ -223,10 +282,13 @@ def run_daily(settings: dict, now: pd.Timestamp | None = None) -> dict:
     # ---------- 2) LIVE（今日） ----------
     dstr = str(today.date())
     if today >= start and not led.run_completed(dstr):
-        targets = targets_for_day(weights, today, strict=True)
+        miss = _missing_decision_bars(dfs, today - pd.Timedelta(days=1))
+        targets = None if miss else targets_for_day(weights, today, strict=True)
         if targets is None:
             incident("P1", "signal_missing_live",
-                     f"{dstr}: D-1 decision bar unavailable, live trading skipped", dstr)
+                     f"{dstr}: D-1 decision bar unavailable for "
+                     f"{miss or 'combined index'} — live trading skipped "
+                     "(no per-asset zeroing)", dstr)
         else:
             try:
                 quotes = _live_quotes(settings["symbols"], slip_floor)

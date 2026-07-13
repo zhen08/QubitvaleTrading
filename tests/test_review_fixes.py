@@ -112,3 +112,63 @@ def test_targets_for_day_strict_returns_none_when_stale():
     future = w.index[-1] + pd.Timedelta(days=5)                 # D-1 决策 bar 缺失
     assert targets_for_day(w, future, strict=True) is None
     assert targets_for_day(w, future, strict=False) is not None  # 仅离线分析允许回退
+
+
+# ---------- 第二轮 review：P1 逐资产时效 / 并发锁 / settled-only ----------
+
+def _price_df(idx):
+    c = np.linspace(100, 200, len(idx))
+    return pd.DataFrame({"ts": idx, "close": c, "open": c, "high": c, "low": c,
+                         "quote_volume": 1e9})
+
+
+def test_one_asset_missing_decision_bar_invalidates_whole_day():
+    """Review 反例：SOL 缺 D-1 bar 时，原实现给 SOL 填 0（= 清仓信号）。"""
+    idx_full = pd.date_range("2024-01-01", periods=300, freq="D", tz="UTC")
+    idx_short = idx_full[:-1]                       # SOL 少最后一天
+    dfs = {"BTCUSDT": _price_df(idx_full), "ETHUSDT": _price_df(idx_full),
+           "SOLUSDT": _price_df(idx_short)}
+    w = compute_weights(dfs)
+    day = idx_full[-1] + pd.Timedelta(days=1)       # 决策日 = idx_full[-1]，SOL 缺
+    assert pd.isna(w.loc[idx_full[-1], "SOLUSDT"])  # 缺数据保留 NaN，不再填 0
+    assert targets_for_day(w, day, strict=True) is None   # 整日拒绝
+
+
+def test_missing_decision_bars_helper_names_symbols():
+    from execution.paper.engine import _missing_decision_bars
+    idx = pd.date_range("2026-07-01", periods=10, freq="D", tz="UTC")
+    dfs = {"BTCUSDT": _price_df(idx).set_index(idx),
+           "SOLUSDT": _price_df(idx[:-1]).set_index(idx[:-1])}
+    assert _missing_decision_bars(dfs, idx[-1]) == ["SOLUSDT"]
+    assert _missing_decision_bars(dfs, idx[-2]) == []
+
+
+def test_exclusive_lock_blocks_second_holder(tmp_path):
+    from execution.paper.engine import _exclusive_lock
+    lock = tmp_path / ".run.lock"
+    with _exclusive_lock(lock) as a:
+        assert a is True
+        with _exclusive_lock(lock) as b:            # 重叠运行 → 拿不到锁
+            assert b is False
+    with _exclusive_lock(lock) as c:                # 释放后可再获取
+        assert c is True
+
+
+def test_equity_series_settled_only_excludes_intraday(tmp_path):
+    led = Ledger.load_or_init(tmp_path, 10_000.0, "2026-07-12")
+    led.mark("2026-07-12", {}, note="settled")
+    led.mark("2026-07-13", {}, note="intraday")
+    assert len(led.equity_series()) == 2
+    s = led.equity_series(settled_only=True)
+    assert len(s) == 1 and str(s.index[0].date()) == "2026-07-12"
+
+
+def test_bootstrap_band_deterministic_and_widens():
+    from ops.tracking import bootstrap_band
+    rng = np.random.default_rng(1)
+    rets = rng.normal(0.0005, 0.016, 1400)
+    b1 = bootstrap_band(rets, 7)
+    b2 = bootstrap_band(rets, 7)
+    assert b1 == b2                                  # 固定种子可复现
+    b42 = bootstrap_band(rets, 42)
+    assert (b42["p97_5"] - b42["p2_5"]) > (b1["p97_5"] - b1["p2_5"])  # 带随视界变宽
