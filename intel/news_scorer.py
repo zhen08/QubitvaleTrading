@@ -1,4 +1,5 @@
-"""新闻打分器：LLM（DeepSeek，OpenAI 兼容）优先，关键词规则兜底 → risk_flags.json。
+"""新闻打分器：LLM 优先（**OpenRouter 接口**调 DeepSeek，2026-07-13 按用户要求切换；
+无 OPENROUTER_API_KEY 时退回 DeepSeek 直连），关键词规则兜底 → risk_flags.json。
 
 角色定位（调研报告 §3.2 的直接推论）：LLM 只做**信息结构化传感器**——
 把标题分类成 {category, direction, severity, assets}，供风控规则消费；
@@ -62,7 +63,33 @@ def _score_keywords(items: list[dict]) -> list[dict]:
     return out
 
 
-def _score_llm(items: list[dict], api_key: str, model: str) -> list[dict] | None:
+def _parse_llm_json(content: str) -> dict:
+    """容错解析：剥掉可能的 ```json 代码围栏后再 json.loads。"""
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+    return json.loads(text)
+
+
+def _llm_backend() -> tuple[str, str, str, dict] | None:
+    """选择 LLM 后端：优先 OpenRouter（用户指定接口），其次 DeepSeek 直连。
+    返回 (endpoint, api_key, model, extra_headers) 或 None。"""
+    or_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if or_key:
+        return ("https://openrouter.ai/api/v1/chat/completions", or_key,
+                os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash"),
+                {"X-Title": "QubitvaleTrading"})
+    ds_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    if ds_key:
+        return ("https://api.deepseek.com/chat/completions", ds_key,
+                os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"), {})
+    return None
+
+
+def _score_llm(items: list[dict], endpoint: str, api_key: str, model: str,
+               extra_headers: dict | None = None) -> list[dict] | None:
     numbered = "\n".join(f"{i}. [{it['source']}] {it['title']}" for i, it in enumerate(items))
     system = (
         "You classify crypto news headlines for a risk-control system. For EACH numbered "
@@ -75,8 +102,8 @@ def _score_llm(items: list[dict], api_key: str, model: str) -> list[dict] | None
     )
     try:
         r = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
+            endpoint,
+            headers={"Authorization": f"Bearer {api_key}", **(extra_headers or {})},
             json={"model": model, "temperature": 0,
                   "response_format": {"type": "json_object"},
                   "messages": [{"role": "system", "content": system},
@@ -84,7 +111,7 @@ def _score_llm(items: list[dict], api_key: str, model: str) -> list[dict] | None
             timeout=90,
         )
         r.raise_for_status()
-        parsed = json.loads(r.json()["choices"][0]["message"]["content"])
+        parsed = _parse_llm_json(r.json()["choices"][0]["message"]["content"])
         by_i = {int(x["i"]): x for x in parsed.get("items", [])}
         out = []
         for i, it in enumerate(items):
@@ -139,10 +166,13 @@ def refresh_risk_flags(settings: dict) -> dict:
                               int(cfg.get("scorer_max_items", 80)))
     scored: list[dict] = []
     if items:
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-        if api_key:
-            scored = _score_llm(items, api_key,
-                                os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")) or []
+        backend = _llm_backend()
+        if backend:
+            endpoint, api_key, model, extra = backend
+            scored = _score_llm(items, endpoint, api_key, model, extra) or []
+            for s in scored:                      # 审计：记录实际使用的模型
+                if s.get("scorer") == "llm":
+                    s["scorer"] = f"llm:{model}"
         if not scored:
             scored = _score_keywords(items)
 

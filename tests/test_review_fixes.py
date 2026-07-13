@@ -172,3 +172,26 @@ def test_bootstrap_band_deterministic_and_widens():
     assert b1 == b2                                  # 固定种子可复现
     b42 = bootstrap_band(rets, 42)
     assert (b42["p97_5"] - b42["p2_5"]) > (b1["p97_5"] - b1["p2_5"])  # 带随视界变宽
+
+
+# ---------- OpenRouter 接入（2026-07-13 用户要求） ----------
+
+def test_llm_backend_prefers_openrouter(monkeypatch):
+    from intel import news_scorer as ns
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-key")
+    ep, key, model, hdr = ns._llm_backend()
+    assert "openrouter.ai/api/v1" in ep and key == "or-key"
+    assert model == "deepseek/deepseek-v4-flash"
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    ep2, key2, model2, _ = ns._llm_backend()
+    assert "api.deepseek.com" in ep2 and key2 == "ds-key"
+    monkeypatch.delenv("DEEPSEEK_API_KEY")
+    assert ns._llm_backend() is None
+
+
+def test_parse_llm_json_strips_fences():
+    from intel.news_scorer import _parse_llm_json
+    plain = '{"items": [{"i": 0}]}'
+    fenced = "```json\n" + plain + "\n```"
+    assert _parse_llm_json(plain) == _parse_llm_json(fenced) == {"items": [{"i": 0}]}

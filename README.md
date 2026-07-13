@@ -59,7 +59,9 @@ bash scripts/setup_mac.sh
 
 **风控规则**（只限制加仓，永不阻止减仓）：CPI/FOMC 等排期事件前 36h 至后 1h 禁开新仓
 （`config/calendar.yaml`，需人工核实维护）；新闻风险旗——资产特定负面 sev≥4 禁加仓、
-sev≥5 减半，市场级(ALL)旗需 sev≥5；**旗过期（TTL 24h）视为状态未知 → 保守禁加仓**；
+sev≥5 减半，市场级(ALL)旗需 sev≥5（打分器走 **OpenRouter** 接口调 DeepSeek：`.env` 配
+`OPENROUTER_API_KEY`，模型默认 `deepseek/deepseek-v4-flash` 可用 `OPENROUTER_MODEL` 覆盖；
+无 key 时关键词规则兜底）；**旗过期（TTL 24h）视为状态未知 → 保守禁加仓**；
 信号必须来自 D-1 决策 bar（Vision 未到用 Bitget 尾部 bar 补齐，仍缺则跳过交易并记
 P1 事故——绝不静默沿用旧信号）。运维事故持久化于 `data/store/ops/incidents.parquet`
 （P0-P3 分级，"零 P0"由此可审计）。**paper 状态以本机 `data/store/paper/` 为准**；
