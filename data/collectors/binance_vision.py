@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -23,6 +24,33 @@ from data import storeio
 log = logging.getLogger("qvt.vision")
 
 BASE = "https://data.binance.vision/data"
+
+# R4: 校验官方 SHA-256（Binance 声明归档可能被修订，每个 zip 均有 .CHECKSUM 文件）。
+# backfill_all 会按 settings.verify_checksums 覆盖此开关。
+VERIFY_CHECKSUMS = True
+
+
+def _fetch_verified(url: str):
+    """下载 zip 并核对官方 CHECKSUM；不匹配则整体重下一次（覆盖归档修订窗口），
+    仍不匹配 → 抛错（宁缺毋错）。404 → None。"""
+    r = http_get(url, ok404=True)
+    if r is None or not VERIFY_CHECKSUMS:
+        return r
+    for attempt in (1, 2):
+        rc = http_get(url + ".CHECKSUM", ok404=True)
+        if rc is None:                       # 个别文件无 CHECKSUM，放行并记录
+            log.debug("no CHECKSUM for %s", url)
+            return r
+        expected = rc.text.strip().split()[0].lower()
+        actual = hashlib.sha256(r.content).hexdigest()
+        if actual == expected:
+            return r
+        if attempt == 1:
+            log.warning("CHECKSUM mismatch, re-downloading: %s", url)
+            r = http_get(url, ok404=True)
+            if r is None:
+                return None
+    raise RuntimeError(f"CHECKSUM mismatch after retry: {url}")
 
 KLINE_COLS = [
     "open_time", "open", "high", "low", "close", "volume",
@@ -118,17 +146,17 @@ def parse_funding(content: bytes) -> pd.DataFrame:
 # ---------------- fetchers ----------------
 
 def fetch_kline_month(market: str, symbol: str, tf: str, ym: str) -> pd.DataFrame | None:
-    r = http_get(kline_month_url(market, symbol, tf, ym), ok404=True)
+    r = _fetch_verified(kline_month_url(market, symbol, tf, ym))
     return None if r is None else parse_klines(r.content)
 
 
 def fetch_kline_day(market: str, symbol: str, tf: str, ymd: str) -> pd.DataFrame | None:
-    r = http_get(kline_day_url(market, symbol, tf, ymd), ok404=True)
+    r = _fetch_verified(kline_day_url(market, symbol, tf, ymd))
     return None if r is None else parse_klines(r.content)
 
 
 def fetch_funding_month(symbol: str, ym: str) -> pd.DataFrame | None:
-    r = http_get(funding_month_url(symbol, ym), ok404=True)
+    r = _fetch_verified(funding_month_url(symbol, ym))
     return None if r is None else parse_funding(r.content)
 
 
@@ -289,6 +317,8 @@ def backfill_funding_series(store, manifest: dict, symbol: str, start_ym: str, w
 
 
 def backfill_all(settings: dict, symbols=None, markets=None, timeframes=None, do_funding=True) -> list[SeriesResult]:
+    global VERIFY_CHECKSUMS
+    VERIFY_CHECKSUMS = bool(settings.get("verify_checksums", True))
     store = storeio.store_dir(settings)
     manifest = storeio.load_manifest(store)
     workers = int(settings.get("download_workers", 12))

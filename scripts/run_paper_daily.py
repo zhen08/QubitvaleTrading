@@ -11,11 +11,12 @@ import argparse
 import json
 import logging
 
+from data import storeio
 from data.collectors import binance_vision, gdelt, news_rss
 from data.collectors.common import load_settings, setup_logging
 from execution.paper.engine import run_daily
 from intel.news_scorer import refresh_risk_flags
-from ops import telegram
+from ops import incident_log, telegram
 
 log = logging.getLogger("qvt.daily")
 
@@ -26,18 +27,24 @@ def main() -> None:
     ap.add_argument("--no-news", action="store_true")
     args = ap.parse_args()
     settings = load_settings()
+    store = storeio.store_dir(settings)
 
-    # 1) 数据增量（失败则中止——不能盲跑）
-    binance_vision.backfill_all(settings, do_funding=False)
+    # 1) 数据增量（失败 → P1 事故并中止：不能盲跑；engine 的 Bitget 尾部机制
+    #    只兜"Vision 未发布"的正常时滞，不兜采集器整体故障）
+    try:
+        binance_vision.backfill_all(settings, do_funding=False)
+    except Exception as exc:  # noqa: BLE001
+        incident_log.record(store, "P1", "backfill_failed", str(exc))
+        raise SystemExit(1)
 
-    # 2) 新闻 + 风险旗（尽力而为，失败不阻断）
+    # 2) 新闻 + 风险旗（失败 → P2 事故；flags TTL 会让引擎保守禁加仓，不会静默沿用）
     if not args.no_news:
         try:
             news_rss.collect(settings)
             gdelt.collect(settings)
             refresh_risk_flags(settings)
         except Exception as exc:  # noqa: BLE001
-            log.warning("news/scorer step failed (non-fatal): %s", exc)
+            incident_log.record(store, "P2", "news_step_failed", str(exc))
 
     # 3) 信号 + paper 调仓
     summary = run_daily(settings)

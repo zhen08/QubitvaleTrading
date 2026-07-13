@@ -50,30 +50,57 @@ class QCResult:
 # ---------------- structural checks ----------------
 
 def check_klines_structure(df: pd.DataFrame, tf: str, qc_cfg: dict, key: str, res: QCResult) -> None:
+    """R4 加固：NaN 行、时间戳网格错位、网格外多余记录均计为违例；
+    missing 基于对齐网格计算且不可为负。"""
     delta = TF_DELTA[tf]
     ts = pd.to_datetime(df["ts"], utc=True)
+
+    # 1) NaN 行（任一 OHLCV 缺失）
+    ohlcv = ["open", "high", "low", "close", "volume"]
+    nan_rows = int(df[ohlcv].isna().any(axis=1).sum())
+
+    # 2) 网格对齐：时间戳必须落在 UTC 网格上（1d=00:00, 1h=整点, 4h=00/04/08…）
+    #    用 floor 比较（单位无关——pandas 3.0 datetime 默认精度已从 ns 改为 us）
+    floor_freq = {"1h": "h", "4h": "4h", "1d": "D"}[tf]
+    aligned_mask = ts == ts.dt.floor(floor_freq)
+    misaligned = int((~aligned_mask).sum())
+    aligned = ts[aligned_mask]
+
+    # 3) 缺口（仅在对齐网格上计算，max(0,·) 防负值）
     dups = int(ts.duplicated().sum())
-    first, last = ts.min(), ts.max()
-    expected = int((last - first) / delta) + 1
-    missing = expected - ts.nunique()
-    missing_pct = 100.0 * missing / expected if expected else 0.0
+    if len(aligned):
+        first, last = aligned.min(), aligned.max()
+        expected = int((last - first) / delta) + 1
+        missing = max(0, expected - aligned.nunique())
+        missing_pct = 100.0 * missing / expected if expected else 0.0
+    else:
+        first = last = pd.NaT
+        missing, missing_pct = len(df), 100.0
+
+    # 4) OHLC 一致性（仅对非 NaN 行判定，NaN 行已单独计违例）
+    valid = df[ohlcv].notna().all(axis=1)
+    d = df[valid]
     viol = int(
         (
-            (df["low"] > df[["open", "close"]].min(axis=1) + 1e-12)
-            | (df["high"] < df[["open", "close"]].max(axis=1) - 1e-12)
-            | (df["low"] > df["high"])
-            | (df["volume"] < 0)
+            (d["low"] > d[["open", "close"]].min(axis=1) + 1e-12)
+            | (d["high"] < d[["open", "close"]].max(axis=1) - 1e-12)
+            | (d["low"] > d["high"])
+            | (d["volume"] < 0)
         ).sum()
     )
     ok = (
         missing_pct <= float(qc_cfg["max_missing_pct"])
         and dups <= int(qc_cfg["max_dup"])
         and viol <= int(qc_cfg["max_ohlc_violations"])
+        and nan_rows == 0
+        and misaligned == 0
     )
     res.add(
         f"structure {key}",
         ok,
-        f"rows={len(df)} span={first.date()}→{last.date()} missing={missing}({missing_pct:.3f}%) dup={dups} ohlc_viol={viol}",
+        f"rows={len(df)} span={first.date() if first is not pd.NaT else '?'}→"
+        f"{last.date() if last is not pd.NaT else '?'} missing={missing}({missing_pct:.3f}%) "
+        f"dup={dups} ohlc_viol={viol} nan_rows={nan_rows} misaligned={misaligned}",
     )
 
 

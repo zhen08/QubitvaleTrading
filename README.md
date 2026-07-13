@@ -1,6 +1,8 @@
 # QubitvaleTrading
 
-个人加密货币量化交易系统（现货 + USDT-M 永续），按 [调研报告](../../Documents/Claude/Projects/Crypto/auto-trading-system-research-2026-07-12.md) §6 的五层架构分阶段搭建。**当前状态：Phase 2 模拟盘运行中（起始 2026-07-12，门槛 ≥6 周跟踪达标）**；Phase 1 研究结论见 `research/reports/phase1_report_2026-07-12.md`。
+个人加密货币量化交易系统（现货 + USDT-M 永续），按 [调研报告](../../Documents/Claude/Projects/Crypto/auto-trading-system-research-2026-07-12.md) §6 的五层架构分阶段搭建。
+
+**当前状态（2026-07-13 review 修订）**：Phase 1 = **研究候选通过、统计认证未通过**（部署组合 DSR(N=4)=0.868 / DSR(N=32)=0.395，均 <0.95，详见 `research/reports/phase1_report_2026-07-13.md`）。Phase 2 = **探索性 paper 验证已搭建**（起始 2026-07-12），**自动化尚未部署**——在 Mac 上运行 `bash scripts/setup_mac.sh` 完成部署后，6 周 gate 计时才正式起算。本仓库当前不构成任何实盘部署依据。
 
 > 免责声明：本仓库仅为个人研究工具，不构成投资建议。合约杠杆交易风险极高。
 
@@ -36,22 +38,32 @@ pytest -q                           # 单元测试
 虚拟 $10,000。信号逻辑与研究引擎共享同一份代码（`research/strategies.donchian`），
 黄金测试锁死一致性。
 
-**每日任务**（任意时间重跑均安全、幂等）：错过的天数自动以当日**开盘价**补账
-（mode=catchup，计入运维指标）；当日则用 Bitget **实时价**成交（mode=live）并记录
-vs 昨收的执行漂移。建议在 UTC 日切后尽早运行以减小漂移——Mac cron（北京 08:10）：
+**自动化部署（必做，Mac 终端一条命令）**：
 
 ```
-10 8 * * * cd ~/Dev/QubitvaleTrading && /usr/bin/python3 -m scripts.run_paper_daily >> logs/paper.log 2>&1
+bash scripts/setup_mac.sh
 ```
+
+脚本会建仓库内 `.venv`（不依赖系统 python 是否有 pandas）、安装 launchd 每日任务
+（本地 08:10；睡眠错过则唤醒后补跑）并立即试跑一次。每日任务幂等可任意重跑：
+错过的天数以当日**开盘价 ±slip_floor** 补账（mode=catchup，并回放当日事件门与
+历史风险旗）；当日用 Bitget **bid/ask**（缺盘口则 last±slip_floor）成交（mode=live）。
+
+**已知简化**（$10k 虚拟盘量级下影响可忽略，如实记录）：不模拟价格/数量步长取整与
+部分成交；catchup 日的历史风险旗仅在归档存在时回放（归档自 2026-07-13 启用）。
 
 **风控规则**（只限制加仓，永不阻止减仓）：CPI/FOMC 等排期事件前 36h 至后 1h 禁开新仓
 （`config/calendar.yaml`，需人工核实维护）；新闻风险旗——资产特定负面 sev≥4 禁加仓、
-sev≥5 减半，市场级(ALL)旗需 sev≥5（打分器：有 `DEEPSEEK_API_KEY` 用 LLM，否则关键词
-规则兜底）。**paper 状态以本机 `data/store/paper/` 为准**；换机器运行前先同步该目录
-（含 signals/、intel/）。
+sev≥5 减半，市场级(ALL)旗需 sev≥5；**旗过期（TTL 24h）视为状态未知 → 保守禁加仓**；
+信号必须来自 D-1 决策 bar（Vision 未到用 Bitget 尾部 bar 补齐，仍缺则跳过交易并记
+P1 事故——绝不静默沿用旧信号）。运维事故持久化于 `data/store/ops/incidents.parquet`
+（P0-P3 分级，"零 P0"由此可审计）。**paper 状态以本机 `data/store/paper/` 为准**；
+换机器运行前先同步该目录（含 signals/、intel/、ops/）。账本为事件溯源设计：
+cash/持仓永远从 `trades.parquet` 重放重建，任意时点崩溃可恢复。
 
-**Phase 2 放行门槛**：连续 ≥6 周，paper 累计收益落在 Phase 1 期望分布 95% 带内、
-跟踪误差(年化) < 2%、零 P0 运维事故（`paper_review` 自动核算进度）。
+**Phase 2 放行门槛**：自动化稳定运行起连续 ≥6 周，paper 累计收益落在期望分布 95%
+带内、跟踪误差(年化) < 2%、零 P0 事故（`paper_review` 自动核算）。因 Phase 1 统计
+认证未通过，6 周达标也只支持『极小额、可全损』级别的 Phase 3 试点。
 
 所有命令在**仓库根目录**运行。配置见 `config/settings.yaml`；密钥复制 `.env.example` 为 `.env`（Phase 0 无需任何密钥）。
 
@@ -88,8 +100,8 @@ FROM klines GROUP BY 1,2,3 ORDER BY 1,2,3;
 | Phase | 内容 | 放行门槛 | 状态 |
 |---|---|---|---|
 | 0 | 数据地基 + 仓库骨架 | QC 全过、跨源 <0.5% | ✅ 2026-07-12 |
-| 1 | 研究平台（成本模型、walk-forward、DSR/PBO）+ 基线策略（趋势/TSMOM/carry 模拟） | ≥1 族净成本 OOS Sharpe>0 且 DSR≥0.95 | ✅ 2026-07-12 PASS（donchian 现货×3 币；部署形态=参数集成×3 币等权） |
-| 2 | 模拟盘（自研 paper 引擎¹ + 信号服务 + 事件门/新闻旗） | ≥6 周跟踪误差在带内 | 🟡 2026-07-12 起运行 |
+| 1 | 研究平台（成本模型、walk-forward、DSR/PBO）+ 基线策略（趋势/TSMOM/carry 模拟） | 部署对象 DSR(N=4)与(N=32) 均≥0.95 | ⚠️ 研究候选 PASS / **统计认证 FAIL**（0.868 / 0.395） |
+| 2 | 探索性模拟盘（自研 paper 引擎¹ + 信号服务 + 事件门/新闻旗） | 自动化后连续 ≥6 周达标 | 🟡 已搭建；自动化待 `setup_mac.sh` |
 | 3 | 小额实盘（硬风控、无提现权限 key、杀开关） | 4–8 周与模拟一致 | ⬜ |
 | 4 | 多所扩展 / 事件驱动 / 月度校准 | 持续 | ⬜ |
 

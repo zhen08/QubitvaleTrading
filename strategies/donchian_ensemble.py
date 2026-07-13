@@ -45,10 +45,12 @@ def compute_weights(dfs: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return w.fillna(0.0)
 
 
-def refresh_signals(settings: dict) -> pd.DataFrame:
-    """重算并落库信号（确定性，可整表覆盖）。返回权重表。"""
+def refresh_signals(settings: dict, dfs: dict[str, pd.DataFrame] | None = None) -> pd.DataFrame:
+    """重算并落库信号（确定性，可整表覆盖）。返回权重表。
+    dfs 可由调用方注入（如 engine 用 Bitget 尾部 bar 补齐 D-1 后传入）。"""
     store = storeio.store_dir(settings)
-    dfs = {sym: load_spot_daily(store, sym) for sym in settings["symbols"]}
+    if dfs is None:
+        dfs = {sym: load_spot_daily(store, sym) for sym in settings["symbols"]}
     weights = compute_weights(dfs)
 
     out_dir = store / "signals"
@@ -72,12 +74,19 @@ def refresh_signals(settings: dict) -> pd.DataFrame:
     return weights
 
 
-def targets_for_day(weights: pd.DataFrame, day: pd.Timestamp) -> dict[str, float]:
-    """day（UTC 日）应持有的目标权重 = 前一日决策。无前一日数据 → 全零。"""
+def targets_for_day(weights: pd.DataFrame, day: pd.Timestamp,
+                    strict: bool = True) -> dict[str, float] | None:
+    """day（UTC 日）应持有的目标权重 = 前一日（D-1）决策。
+
+    R6 修复：strict=True（默认）时 D-1 决策缺失返回 **None**（调用方必须把
+    "无新鲜信号"当作事故处理、跳过交易），不再静默沿用更早的决策。
+    strict=False 仅供离线分析。"""
     decision_day = day.normalize() - pd.Timedelta(days=1)
     if decision_day in weights.index:
         return {k: float(v) for k, v in weights.loc[decision_day].items()}
+    if strict:
+        return None
     earlier = weights.loc[:decision_day]
-    if len(earlier):                       # 数据缺口时用最近一次决策（记录在案）
+    if len(earlier):
         return {k: float(v) for k, v in earlier.iloc[-1].items()}
     return {k: 0.0 for k in weights.columns}

@@ -171,16 +171,58 @@ def refresh_risk_flags(settings: dict) -> dict:
     }
     out_dir = store / "intel"
     out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / "risk_flags.json", "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=1, ensure_ascii=False)
-    log.info("risk_flags: %d scored via %s, neg_sev=%s",
-             payload["n_scored"], payload["scorer"], neg_sev)
+    tmp = out_dir / "risk_flags.json.tmp"
+    tmp.write_text(json.dumps(payload, indent=1, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, out_dir / "risk_flags.json")
+
+    # R6: 历史归档（append-only）——审计"某日为何放行/拦截"，catchup 也能按时点取旗
+    hist_row = pd.DataFrame([{
+        "generated_at": payload["generated_at"], "scorer": payload["scorer"],
+        "n_scored": payload["n_scored"],
+        "market_neg_severity": payload["market_neg_severity"],
+        **{f"neg_{a}": neg_sev[a] for a in ASSETS},
+    }])
+    hp = out_dir / "risk_flags_history.parquet"
+    hist = pd.read_parquet(hp) if hp.exists() else None
+    hist = pd.concat([hist, hist_row], ignore_index=True) if hist is not None else hist_row
+    htmp = out_dir / "risk_flags_history.parquet.tmp"
+    hist.to_parquet(htmp, index=False)
+    os.replace(htmp, hp)
+
+    log.info("risk_flags: %d scored via %s, neg_sev=%s mkt=%s",
+             payload["n_scored"], payload["scorer"], neg_sev, market_neg)
     return payload
 
 
 def load_risk_flags(settings: dict) -> dict:
+    """当前旗 + 时效标注（R6：TTL 过期由调用方按'状态未知'保守处理）。"""
     p = storeio.store_dir(settings) / "intel" / "risk_flags.json"
     if not p.exists():
-        return {"asset_neg_severity": {}}
+        return {"asset_neg_severity": {}, "market_neg_severity": 0, "stale": True,
+                "age_hours": None}
     with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+        flags = json.load(f)
+    ttl = float(settings.get("intel", {}).get("risk_flags_ttl_hours", 24))
+    try:
+        age_h = (pd.Timestamp.now(tz="UTC") - pd.Timestamp(flags["generated_at"])) \
+            / pd.Timedelta(hours=1)
+    except (KeyError, ValueError):
+        age_h = None
+    flags["age_hours"] = round(age_h, 1) if age_h is not None else None
+    flags["stale"] = bool(age_h is None or age_h > ttl)
+    return flags
+
+
+def load_flags_asof(settings: dict, ts: pd.Timestamp, max_age_hours: float = 24) -> dict | None:
+    """历史归档中 ≤ts 且未过期的最近一条（catchup 回放风控用）；无则 None。"""
+    hp = storeio.store_dir(settings) / "intel" / "risk_flags_history.parquet"
+    if not hp.exists():
+        return None
+    h = pd.read_parquet(hp)
+    gen = pd.to_datetime(h["generated_at"], utc=True, format="mixed")
+    m = (gen <= ts) & (gen >= ts - pd.Timedelta(hours=max_age_hours))
+    if not m.any():
+        return None
+    r = h[m].iloc[-1]
+    return {"asset_neg_severity": {a: int(r[f"neg_{a}"]) for a in ASSETS},
+            "market_neg_severity": int(r["market_neg_severity"]), "stale": False}

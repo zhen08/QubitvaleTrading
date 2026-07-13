@@ -9,6 +9,7 @@ timeframes: [1h, 4h, 1d]
 start_month: "2019-01"       # 各币种实际起点自动探测（上市前月份 404 会被记录并跳过）
 funding_start_month: "2019-09"
 download_workers: 12
+verify_checksums: true       # R4: 校验 Binance Vision 官方 SHA-256
 
 # ---- Bitget 实时源（CCXT，公共端点无需密钥）----
 bitget:
@@ -40,6 +41,7 @@ paper:
 intel:
   event_gate_lookahead_hours: 36  # 事件前 36h 起禁开新仓（日频粒度下覆盖"前2h"精神）
   event_gate_cooldown_hours: 1    # 事件后 1h 解除
+  risk_flags_ttl_hours: 24        # R6: 旗过期视为"状态未知"→ 保守禁加仓
   risk_flag_no_add_severity: 4    # 负面 sev≥4：该资产禁加仓
   risk_flag_halve_severity: 5     # 负面 sev≥5：该资产目标减半
   scorer_max_items: 80

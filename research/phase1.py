@@ -27,6 +27,14 @@ FIXED_KWARGS = {
     "um": {"tsmom": {"long_short": True, "max_lev": 2.0}},
 }
 GATE_DSR = 0.95
+DEPLOY_FAMILY = "donchian"   # 部署形态所选族——统计认证必须针对这个对象计算
+
+# 2026-07-13 修订（review R1）：原 gate 只按"族内网格试验数"校正 DSR，低估了实际
+# 发生的选择（4 族 × 3 币 × 2 市场 × 成本口径 × 选参/集成切换）。现拆成两级：
+#   研究候选（research candidate）：族内口径 OOS>0 且族内 DSR≥0.95（弱标准，供筛选）
+#   统计认证（certification）    ：**部署对象**（跨币参数集成组合）在 N=4（族选择）
+#                                  与 N=32（组合级参数×族试验）两种校正下 DSR 均 ≥0.95
+# 认证未过 → Phase 2 只能作为"探索性 paper 验证"，不构成策略认证。
 
 
 def _load(store: Path, market: str, symbol: str) -> pd.DataFrame:
@@ -41,10 +49,11 @@ def _bh_oos(df: pd.DataFrame, cost_model, funding, oos_index) -> float:
 
 def run_market(store, symbol: str, market: str, cost_model, funding_by_day):
     df = _load(store, market, symbol)
-    rows, wf_by_family, all_vr, ens_map = [], {}, [], {}
+    rows, wf_by_family, all_vr, ens_map, vr_map = [], {}, [], {}, {}
     for family in GRIDS:
         vr = build_variant_returns(df, family, cost_model, funding_by_day,
                                    FIXED_KWARGS.get(market, {}).get(family))
+        vr_map[family] = vr
         wf = walk_forward(vr, family)
         wf_by_family[family] = wf
         all_vr.append(vr)
@@ -73,12 +82,12 @@ def run_market(store, symbol: str, market: str, cost_model, funding_by_day):
                 "ens_oos_maxdd_pct": round(100 * metrics.max_drawdown(ens_oos), 1),
                 "bh_oos_sharpe": round(_bh_oos(df, cost_model, funding_by_day,
                                                oos.index), 2),
-                "gate": bool(s["sharpe"] > 0 and dsr >= GATE_DSR),
+                "family_gate": bool(s["sharpe"] > 0 and dsr >= GATE_DSR),
             }
         )
-        log.info("%s/%s %-12s oos_sharpe=%5.2f dsr=%.3f pbo=%s gate=%s",
+        log.info("%s/%s %-12s oos_sharpe=%5.2f dsr=%.3f pbo=%s family_gate=%s",
                  symbol, market, family, s["sharpe"], dsr, rows[-1]["pbo"],
-                 rows[-1]["gate"])
+                 rows[-1]["family_gate"])
 
     # meta-DSR：对每一行都用全部 32 个试验校正（跨族选择也算试验——更诚实的数字）
     vr_all = pd.concat(all_vr, axis=1)
@@ -87,7 +96,7 @@ def run_market(store, symbol: str, market: str, cost_model, funding_by_day):
         r["dsr_meta32"] = round(
             metrics.deflated_sharpe(wf_by_family[r["family"]].oos_net,
                                     TOTAL_TRIALS_PER_SYMBOL, var_all), 3)
-    return rows, wf_by_family, ens_map
+    return rows, wf_by_family, ens_map, vr_map
 
 
 def run_all() -> tuple[pd.DataFrame, dict, dict, pd.DataFrame]:
@@ -95,6 +104,7 @@ def run_all() -> tuple[pd.DataFrame, dict, dict, pd.DataFrame]:
     store = storeio.store_dir(settings)
     all_rows, folds_appendix, carry_out = [], {}, {}
     spot_ens: dict[str, dict] = {}          # symbol -> {family: ens_oos}
+    spot_vr: dict[str, dict] = {}           # symbol -> {family: T×N variant returns}
 
     for symbol in settings["symbols"]:
         funding = pd.read_parquet(storeio.funding_um_path(store, symbol))
@@ -105,10 +115,11 @@ def run_all() -> tuple[pd.DataFrame, dict, dict, pd.DataFrame]:
             ("um", UM_TAKER, fund_day),
             ("um", UM_MAKER, fund_day),      # maker 敏感性
         ):
-            rows, wfs, ens_map = run_market(store, symbol, market, cm, fnd)
+            rows, wfs, ens_map, vr_map = run_market(store, symbol, market, cm, fnd)
             all_rows.extend(rows)
             if market == "spot":
                 spot_ens[symbol] = ens_map
+                spot_vr[symbol] = vr_map
             if cm is not UM_MAKER:
                 best = max(rows, key=lambda r: r["oos_sharpe"])
                 folds_appendix[f"{symbol}/{market}/{best['family']}"] = \
@@ -116,19 +127,30 @@ def run_all() -> tuple[pd.DataFrame, dict, dict, pd.DataFrame]:
 
         carry_out[symbol] = run_carry_suite(funding)
 
-    # 跨币等权组合：每族 = 参数集成 × 3 币等权（唯一自由度 = 选哪一族，N=4）
+    # ---- 部署级组合与两级 DSR 校正（R1）----
+    # 族级组合：每族 = 参数集成 × 3 币等权（族选择 N=4）
     port_rows = []
     port_series: dict[str, pd.Series] = {}
     for family in GRIDS:
         legs = pd.concat({s: spot_ens[s][family] for s in spot_ens}, axis=1).dropna()
-        port = legs.mean(axis=1)
-        port_series[family] = port
-        s = metrics.summary(port, "1d")
-        port_rows.append({"family": family, **s})
-    var_port = metrics.trials_sr_variance(pd.DataFrame(port_series))
+        port_series[family] = legs.mean(axis=1)
+        port_rows.append({"family": family, **metrics.summary(port_series[family], "1d")})
+    var_n4 = metrics.trials_sr_variance(pd.DataFrame(port_series))
+
+    # 组合级试验宇宙：每个 (族, 参数) 的跨币等权组合共 32 条 → N=32 的保守校正
+    param_ports = {}
+    symbols = list(spot_vr)
+    for family in GRIDS:
+        for col in spot_vr[symbols[0]][family].columns:
+            legs = pd.concat({s: spot_vr[s][family][col] for s in symbols}, axis=1).dropna()
+            param_ports[f"{family}:{col}"] = legs.mean(axis=1)
+    var_n32 = metrics.trials_sr_variance(pd.DataFrame(param_ports))
+
     for r in port_rows:
-        r["dsr_n4"] = round(
-            metrics.deflated_sharpe(port_series[r["family"]], 4, var_port), 3)
+        r["dsr_n4"] = round(metrics.deflated_sharpe(port_series[r["family"]], 4, var_n4), 3)
+        r["dsr_n32"] = round(
+            metrics.deflated_sharpe(port_series[r["family"]],
+                                    TOTAL_TRIALS_PER_SYMBOL, var_n32), 3)
     return pd.DataFrame(all_rows), folds_appendix, carry_out, pd.DataFrame(port_rows)
 
 
@@ -150,12 +172,19 @@ def write_report(df: pd.DataFrame, folds: dict, carry: dict,
     out_dir.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_dir / f"phase1_summary_{date}.csv", index=False)
 
-    passers = df[df["gate"]]
-    gate_passed = len(passers) > 0
+    passers = df[df["family_gate"]]
+    candidate_pass = len(passers) > 0
+    if portfolio is not None and len(portfolio):
+        dep = portfolio[portfolio["family"] == DEPLOY_FAMILY].iloc[0]
+        certified = bool(dep["dsr_n4"] >= GATE_DSR and dep["dsr_n32"] >= GATE_DSR
+                         and dep["sharpe"] > 0)
+    else:
+        dep, certified = None, False
+    gate_passed = certified   # 对外唯一的"通过"含义 = 统计认证
 
     cols = ["symbol", "market", "family", "cost", "full_best_sharpe", "oos_sharpe",
             "oos_cagr_pct", "oos_maxdd_pct", "dsr", "dsr_meta32", "pbo",
-            "ens_oos_sharpe", "bh_oos_sharpe", "gate"]
+            "ens_oos_sharpe", "bh_oos_sharpe", "family_gate"]
 
     parts = [
         f"# Phase 1 研究报告 — {date}",
@@ -166,19 +195,27 @@ def write_report(df: pd.DataFrame, folds: dict, carry: dict,
         "（Binance 序列作 Bitget 代理）。`full_best_sharpe` 为全样本事后最优（过拟合上界，"
         "仅供对照）；判定只看 walk-forward OOS。",
         "",
-        f"## 门槛判定：**{'PASS ✅' if gate_passed else 'FAIL ❌（无策略族达标）'}**",
-        f"标准：净成本 OOS 年化 Sharpe > 0 且 DSR ≥ {GATE_DSR}（按族内试验数校正）。"
-        "`dsr_meta32` 为按全部 32 试验（含跨族选择）校正的更严格数字；"
-        "`ens_oos_sharpe` 为族内参数**等权集成**（无选参）的 OOS Sharpe——"
-        "当 `pbo` 高（族内参数排名不稳定）时，集成是比选单参数更稳健的部署形态。",
+        "## 门槛判定（2026-07-13 修订：两级标准，认证针对部署对象）",
         "",
-        "### 达标策略族"
-        if gate_passed else "",
+        f"**研究候选：{'PASS ✅' if candidate_pass else 'FAIL ❌'}**"
+        f"（族内口径：OOS Sharpe>0 且族内 DSR≥{GATE_DSR}；达标 {len(passers)} 行）",
+        "",
+        f"**统计认证：{'PASS ✅' if certified else 'FAIL ❌ — 未通过'}**"
+        + (f"（部署对象 = {DEPLOY_FAMILY} 参数集成×3 币组合："
+           f"DSR(N=4 族选择)={dep['dsr_n4']}, DSR(N=32 组合级参数×族)={dep['dsr_n32']}，"
+           f"要求两者均 ≥{GATE_DSR}）" if dep is not None else ""),
+        "",
+        "> 修订说明：原版 gate 只按族内试验数校正 DSR，低估了实际发生的选择"
+        "（4 族×3 币×2 市场×成本口径×选参/集成切换），且认证对象与部署对象不一致"
+        "（PBO 0.66–0.92 亦属强警告）。**认证未通过时，Phase 2 定位为探索性 paper 验证，"
+        "不构成策略认证**；`family_gate` 列仅为族内弱口径，供筛选参考。",
+        "",
+        "### 研究候选（族内口径达标行）",
         "",
         _md_table(passers, ["symbol", "market", "family", "oos_sharpe", "dsr",
                             "dsr_meta32", "pbo", "ens_oos_sharpe",
                             "ens_oos_maxdd_pct", "bh_oos_sharpe"])
-        if gate_passed else "",
+        if candidate_pass else "（无）",
         "",
         "## 主结果（walk-forward 样本外，净成本）",
         "",
@@ -190,7 +227,7 @@ def write_report(df: pd.DataFrame, folds: dict, carry: dict,
         "这是最接近实际部署形态的数字，也是 DSR 校正最少受选择污染的口径。",
         "",
         _md_table(portfolio, ["family", "sharpe", "cagr_pct", "ann_vol_pct",
-                              "max_dd_pct", "n_bars", "dsr_n4"])
+                              "max_dd_pct", "n_bars", "dsr_n4", "dsr_n32"])
         if portfolio is not None else "",
         "",
         "## 资金费率 carry 模拟（delta 中性，1x，不属于预测类门槛）",
@@ -217,17 +254,21 @@ def write_report(df: pd.DataFrame, folds: dict, carry: dict,
         parts += [
             "## 结论",
             "",
-            f"1. **预注册门槛：{'通过' if gate_passed else '未通过'}**。"
-            + (f"达标 {len(passers)} 行（{', '.join(sorted(set(passers['symbol'])))} 现货 "
-               f"{', '.join(sorted(set(passers['family'])))}，族内 DSR 0.96–0.98）。" if gate_passed else ""),
+            f"1. **两级判定**：研究候选{'通过' if candidate_pass else '未通过'}"
+            + (f"（{', '.join(sorted(set(passers['symbol'])))} 现货 "
+               f"{', '.join(sorted(set(passers['family'])))}，族内 DSR 0.96–0.98）" if candidate_pass else "")
+            + f"；**统计认证{'通过' if certified else '未通过'}**——部署组合 "
+            + (f"DSR(N=4)={dep['dsr_n4']}、DSR(N=32)={dep['dsr_n32']}，低于 {GATE_DSR} 门槛。"
+               if dep is not None and not certified else ""),
             "",
-            f"2. **证据强度的诚实评估**：更严格口径下并非铁证——单市场 meta-DSR(32) 仅 "
+            f"2. **证据强度的定性**：单市场 meta-DSR(32) 仅 "
             f"{passers['dsr_meta32'].min():.2f}–{passers['dsr_meta32'].max():.2f}，"
-            f"跨币组合口径 DSR(N=4) = {bp['dsr_n4']:.2f}。支撑点在于三币方向一致、"
-            "参数集成后依旧稳健、且与同行评审文献（趋势类在流动币过成本存活，JFQA 2025 CTREND）同向。"
-            "结论定性为：**真实但中等强度的边际优势**，配得上小资金验证，配不上重仓。",
+            f"PBO 0.66–0.92 属强警告（族内参数排名不稳定，集成只消除选参风险、不消除族级不确定性）。"
+            "支撑点：三币方向一致、参数集成后稳健、与文献（JFQA 2025 CTREND）同向。"
+            "定性为**未经认证的研究候选**：有真实但中等强度的证据，只配探索性模拟验证，"
+            "不构成任何实盘部署依据。",
             "",
-            f"3. **建议部署形态（Phase 2 模拟盘对象）**：`{bp['family']}` 参数集成 × 3 币等权（现货长平）。"
+            f"3. **探索性 paper 验证对象（非认证策略）**：`{bp['family']}` 参数集成 × 3 币等权（现货长平）。"
             f"组合期望特征（净成本、3.9 年 OOS 交集）：Sharpe ≈ {bp['sharpe']}, "
             f"CAGR ≈ {bp['cagr_pct']}%, 年化波动 ≈ {bp['ann_vol_pct']}%, MaxDD ≈ {bp['max_dd_pct']}%。"
             "tsmom 集成（低波动、MaxDD −12%）作为分散候选在模拟盘并行观察（该组合未预注册，只观察不部署）。",

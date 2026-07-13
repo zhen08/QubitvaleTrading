@@ -90,6 +90,9 @@ def build_review(settings: dict) -> tuple[str, dict]:
     n_catch = int((trades["mode"] == "catchup").sum()) if len(trades) else 0
     fees = float(trades["fee"].sum()) if len(trades) else 0.0
 
+    from ops import incident_log
+    inc = incident_log.counts_since(store, str(pcfg["start_date"]))
+
     weeks = n / 7.0
     stats.update(cum_paper_pct=round(100 * cum_paper, 2),
                  cum_model_pct=round(100 * cum_model, 2),
@@ -106,9 +109,14 @@ def build_review(settings: dict) -> tuple[str, dict]:
         f"| 跟踪误差 TE(年化) | {100*te_ann:.2f}% | — | 目标 < 2% |" if te_ann == te_ann else "| 跟踪误差 | 样本不足 | — | |",
         f"| Phase1 期望带 | {100*(exp_mu-band80):.2f}% ~ {100*(exp_mu+band80):.2f}% (80%) | ±{100*band95:.2f}% (95%) | paper {'在' if in80 else ('在95%带内' if in95 else '**出带**')} |",
         f"| 成交 | live {n_live} 笔 / catchup {n_catch} 笔 | 费用 ${fees:.2f} | live 占比 {n_live/max(1,n_live+n_catch):.0%} |",
+        f"| 运维事故 | P0={inc['P0']} P1={inc['P1']} | P2={inc['P2']} P3={inc['P3']} | 明细 data/store/ops/incidents.parquet |",
         "",
-        f"**Gate 进度**：{weeks:.1f}/6 周；95% 带内：{'✅' if in95 else '❌'}；"
-        f"TE：{'✅' if te_ann == te_ann and te_ann < 0.02 else '观察中'}。",
+        f"**Gate 进度**：{weeks:.1f}/6 周（自动化稳定运行后正式起算）；95% 带内：{'✅' if in95 else '❌'}；"
+        f"TE：{'✅' if te_ann == te_ann and te_ann < 0.02 else '观察中'}；"
+        f"P0 事故：{'✅ 0' if inc['P0'] == 0 else '❌ ' + str(inc['P0'])}。",
+        "",
+        "> 注：本策略为**未经统计认证的研究候选**（Phase 1 修订判定），本模拟盘属探索性验证；"
+        "6 周达标也只支持『极小额、可全损』级别的 Phase 3 试点，不构成任何部署背书。",
         "",
         "最近 10 笔成交：",
         "",

@@ -1,0 +1,114 @@
+"""Review（2026-07-13）修复的回归测试——每条对应 review 的一个反例。"""
+import json
+
+import numpy as np
+import pandas as pd
+
+from execution.paper.engine import _rebalance
+from execution.paper.ledger import Ledger
+from research.qc_report import QCResult, check_klines_structure
+from strategies.donchian_ensemble import compute_weights, targets_for_day
+
+QC_CFG = {"max_missing_pct": 0.2, "max_dup": 0, "max_ohlc_violations": 0}
+TS = pd.Timestamp("2026-07-12T00:10:00Z")
+SETTINGS = {"paper": {"rebalance_threshold": 0.02, "fee_bps_side": 10.0,
+                      "min_trade_usdt": 10.0}}
+
+
+def _mk(ts, o=100.0, h=101.0, l=99.0, c=100.5, v=1.0):
+    return pd.DataFrame({"ts": pd.to_datetime(ts, utc=True),
+                         "open": o, "high": h, "low": l, "close": c, "volume": v})
+
+
+# ---------- R4: QC 反例（review 提供的三个都必须 FAIL） ----------
+
+def test_qc_nan_row_fails():
+    ts = pd.date_range("2026-01-01", periods=200, freq="h", tz="UTC")
+    df = _mk(ts)
+    df.loc[50, ["open", "high", "low", "close", "volume"]] = np.nan
+    res = QCResult()
+    check_klines_structure(df, "1h", QC_CFG, "t/nan", res)
+    assert not res.gate_passed
+
+
+def test_qc_30min_offset_fails():
+    ts = pd.date_range("2026-01-01 00:30", periods=200, freq="h", tz="UTC")  # 全部错位 30 分钟
+    res = QCResult()
+    check_klines_structure(_mk(ts), "1h", QC_CFG, "t/offset", res)
+    assert not res.gate_passed
+
+
+def test_qc_extra_offgrid_records_fail_and_missing_nonnegative():
+    ts = list(pd.date_range("2026-01-01", periods=200, freq="h", tz="UTC"))
+    ts.append(pd.Timestamp("2026-01-03 05:17", tz="UTC"))  # 网格外多余记录
+    res = QCResult()
+    check_klines_structure(_mk(sorted(ts)), "1h", QC_CFG, "t/extra", res)
+    assert not res.gate_passed
+    detail = res.checks[0].detail
+    assert "missing=-" not in detail          # missing 不允许为负
+    assert "misaligned=1" in detail
+
+
+# ---------- R2: 崩溃恢复（账本状态从事件日志重放，快照失真自动纠正） ----------
+
+def test_ledger_recovers_from_stale_snapshot(tmp_path):
+    led = Ledger.load_or_init(tmp_path, 10_000.0, "2026-07-12")
+    led.execute(ts=TS, day="2026-07-12", symbol="ETHUSDT", target_qty=0.5,
+                price=1_800.0, fee_bps=10.0, mode="live", reason="t")
+    # 模拟"成交已落盘、快照保存前崩溃"：把 state.json 回写成成交前的旧快照
+    stale = {"initial_capital": 10_000.0, "start_date": "2026-07-12",
+             "last_settled": None, "cash": 10_000.0, "positions": {}}
+    (tmp_path / "paper" / "state.json").write_text(json.dumps(stale), encoding="utf-8")
+
+    led2 = Ledger.load_or_init(tmp_path, 10_000.0, "2026-07-12")
+    assert led2.positions == {"ETHUSDT": 0.5}                  # 重放恢复，而非空仓
+    assert abs(led2.cash - (10_000 - 900 - 0.9)) < 1e-9
+
+
+def test_run_registry_not_inferred_from_trades(tmp_path):
+    led = Ledger.load_or_init(tmp_path, 10_000.0, "2026-07-12")
+    led.execute(ts=TS, day="2026-07-12", symbol="ETHUSDT", target_qty=0.1,
+                price=1_800.0, fee_bps=10.0, mode="live", reason="t")
+    assert led.rebalanced_on("2026-07-12")                     # 有成交
+    assert not led.run_completed("2026-07-12")                 # 但调仓未注册完成 → 重跑会补差额
+    led.record_run("2026-07-12", "live", 1)
+    assert led.run_completed("2026-07-12", "live")
+
+
+# ---------- R3: 现金护栏 + 满仓不透支 ----------
+
+def test_cash_cap_prevents_negative_cash(tmp_path):
+    led = Ledger.load_or_init(tmp_path, 10_000.0, "2026-07-12")
+    led.execute(ts=TS, day="2026-07-12", symbol="BTCUSDT", target_qty=1.0,  # 想买 $50k
+                price=50_000.0, fee_bps=10.0, mode="live", reason="t")
+    assert led.cash >= -1e-6
+    assert abs(led.cash) < 1e-4                                 # 全部现金用尽但不为负
+    assert led.positions["BTCUSDT"] < 0.2001                    # 被封顶在 ~10000/1.001/50000
+
+
+def test_full_allocation_rebalance_no_negative_cash(tmp_path):
+    """Review 反例：三币各 1/3 满仓 → 原实现 cash=-10；现在必须 ≥0。"""
+    led = Ledger.load_or_init(tmp_path, 10_000.0, "2026-07-12")
+    quotes = {s: {"mark": 100.0, "buy": 100.01, "sell": 99.99}
+              for s in ("BTCUSDT", "ETHUSDT", "SOLUSDT")}
+    targets = {s: 1.0 / 3.0 for s in quotes}
+    trades = _rebalance(led, targets, quotes, day="2026-07-12", ts=TS,
+                        mode="live", reason="t", settings=SETTINGS)
+    assert led.cash >= -1e-6
+    assert len(trades) == 3
+    eq = led.equity({s: 100.0 for s in quotes})
+    assert 9_970 < eq <= 10_000                                 # 只损失费用+滑点
+
+
+# ---------- R6: 信号严格时效（不再静默沿用旧决策） ----------
+
+def test_targets_for_day_strict_returns_none_when_stale():
+    idx = pd.date_range("2024-01-01", periods=300, freq="D", tz="UTC")
+    close = pd.Series(np.linspace(100, 200, 300), index=idx)
+    dfs = {"BTCUSDT": pd.DataFrame({"ts": idx, "close": close.to_numpy(),
+                                    "open": close.to_numpy(), "high": close.to_numpy(),
+                                    "low": close.to_numpy(), "quote_volume": 1e9})}
+    w = compute_weights(dfs)
+    future = w.index[-1] + pd.Timedelta(days=5)                 # D-1 决策 bar 缺失
+    assert targets_for_day(w, future, strict=True) is None
+    assert targets_for_day(w, future, strict=False) is not None  # 仅离线分析允许回退

@@ -12,8 +12,10 @@ from research.phase1 import run_all, write_report
 def main() -> None:
     setup_logging()
     df, folds, carry, portfolio = run_all()
-    path, gate = write_report(df, folds, carry, portfolio)
-    print(f"\nreport -> {path}\ngate: {'PASS' if gate else 'FAIL (no family qualifies)'}")
+    path, certified = write_report(df, folds, carry, portfolio)
+    print(f"\nreport -> {path}")
+    print(f"statistical certification: {'PASS' if certified else 'FAIL — research candidate only'}"
+          " (两级判定详见报告门槛章节)")
 
 
 if __name__ == "__main__":

@@ -41,8 +41,13 @@ def news_path(store: Path, name: str) -> Path:
 
 
 def write_parquet(df: pd.DataFrame, path: Path) -> None:
+    """原子写（R4）：tmp + os.replace，避免半写文件破坏数据仓。"""
+    import os
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(path, index=False)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    df.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
 
 
 def read_parquet_if_exists(path: Path) -> pd.DataFrame | None:
@@ -75,5 +80,10 @@ def load_manifest(store: Path) -> dict:
 
 
 def save_manifest(store: Path, manifest: dict) -> None:
-    with open(manifest_path(store), "w", encoding="utf-8") as f:
+    import os
+
+    p = manifest_path(store)
+    tmp = p.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=1, ensure_ascii=False, default=str)
+    os.replace(tmp, p)
