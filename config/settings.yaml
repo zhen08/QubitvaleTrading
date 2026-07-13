@@ -28,15 +28,19 @@ news:
   gdelt_timespan: "12h"
   gdelt_maxrecords: 100
 
-# ---- Phase 2 模拟盘 ----
+# ---- Phase 2 模拟盘（多账本，2026-07-13 起）----
 paper:
-  initial_capital_usdt: 10000
-  start_date: "2026-07-12"        # UTC
   fee_bps_side: 10                # 现货 taker（保守；BGB 抵扣可到 8）
   slip_floor_bps: 1.0
   rebalance_threshold: 0.02       # |目标-当前| 权重差超过 2% 才调仓（控制漂移换手）
   min_trade_usdt: 10
-  strategy: donchian_ensemble     # 部署形态：4 参数集成 × 3 币等权，现货长平
+  books:                          # 每本账独立资金/账本/基准；策略见 strategies/registry.py
+    donchian_ensemble:
+      initial_capital_usdt: 10000
+      start_date: "2026-07-12"    # UTC
+    tsmom_ensemble:
+      initial_capital_usdt: 10000
+      start_date: "2026-07-13"    # UTC；预注册条款见 strategies/tsmom_ensemble.py 文件头
 
 intel:
   event_gate_lookahead_hours: 36  # 事件前 36h 起禁开新仓（日频粒度下覆盖"前2h"精神）

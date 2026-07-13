@@ -46,21 +46,24 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             incident_log.record(store, "P2", "news_step_failed", str(exc))
 
-    # 3) 信号 + paper 调仓
+    # 3) 信号 + 各账本调仓
     summary = run_daily(settings)
     print(json.dumps(summary, indent=1, ensure_ascii=False))
 
-    # 4) 通知
-    pos = ", ".join(f"{k}:{v:.5f}" for k, v in summary.get("positions", {}).items()) or "空仓"
-    msg = (f"*QVT paper* {summary['date']}\n"
-           f"equity: ${summary.get('equity', '?')} "
-           f"({summary.get('equity_ret_pct_since_start', 0)}% since start)\n"
-           f"positions: {pos}\n"
-           f"live trades: {len(summary.get('live_trades', []))}, "
-           f"incidents: {len(summary.get('incidents', []))}")
-    if summary.get("notes"):
-        msg += "\nnotes: " + "; ".join(summary["notes"])
-    telegram.send(msg)
+    # 4) 通知（多账本汇总）
+    lines = [f"*QVT paper* {summary['date']}"]
+    for book, bs in summary.get("books", {}).items():
+        if "error" in bs:
+            lines.append(f"{book}: ERROR {bs['error'][:80]}")
+            continue
+        pos = ", ".join(f"{k}:{v:.5f}" for k, v in bs.get("positions", {}).items()) or "空仓"
+        lines.append(f"{book}: ${bs.get('equity', '?')} "
+                     f"({bs.get('ret_pct_since_start', 0)}%) | {pos} | "
+                     f"live {len(bs.get('live_trades', []))} 笔")
+        for n in bs.get("notes", [])[:3]:
+            lines.append(f"  · {n}")
+    lines.append(f"incidents: {len(summary.get('incidents', []))}")
+    telegram.send("\n".join(lines))
 
 
 if __name__ == "__main__":

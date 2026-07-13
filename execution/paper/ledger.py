@@ -56,8 +56,11 @@ class Ledger:
     # ---------------- 加载 = 元数据 + 事件重放 ----------------
 
     @classmethod
-    def load_or_init(cls, store: Path, initial_capital: float, start_date: str) -> "Ledger":
-        d = store / "paper"
+    def load_or_init(cls, store: Path, initial_capital: float, start_date: str,
+                     book: str | None = None) -> "Ledger":
+        """book：多账本命名空间（data/store/paper/<book>/）。None = 旧版根目录
+        （仅测试/兼容用；生产引擎总是传策略名）。"""
+        d = (store / "paper" / book) if book else (store / "paper")
         d.mkdir(parents=True, exist_ok=True)
         p = d / "state.json"
         if p.exists():
