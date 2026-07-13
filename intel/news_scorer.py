@@ -133,28 +133,42 @@ def _score_llm(items: list[dict], endpoint: str, api_key: str, model: str,
         return None
 
 
-def _recent_headlines(store: Path, window_hours: int, max_items: int) -> list[dict]:
-    frames = []
-    rss_p = storeio.news_path(store, "rss")
-    if rss_p.exists():
-        df = pd.read_parquet(rss_p)
-        frames.append(pd.DataFrame({
-            "title": df["title"], "source": df["source"],
-            "t": pd.to_datetime(df["published_utc"], utc=True)}))
-    g_p = storeio.news_path(store, "gdelt")
-    if g_p.exists():
-        df = pd.read_parquet(g_p)
-        frames.append(pd.DataFrame({
-            "title": df["title"], "source": df["domain"],
-            "t": pd.to_datetime(df["seen_utc"], utc=True)}))
-    if not frames:
-        return []
-    allf = pd.concat(frames, ignore_index=True).dropna(subset=["title"])
+def _recent_headlines(store: Path, window_hours: int, max_items: int,
+                      rss_reserve: int = 0) -> list[dict]:
+    """Newest headlines in the window, capped at max_items.
+
+    RSS is the curated, higher-signal source but low-volume; GDELT is a
+    high-frequency multilingual firehose whose fresher timestamps otherwise
+    evict RSS from the top `max_items`. `rss_reserve` guarantees RSS at least
+    min(rss_reserve, RSS-available) slots; GDELT takes the remainder, and either
+    source expands into the other's unused slots. Cross-source title duplicates
+    keep the RSS copy.
+    """
     cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=window_hours)
-    allf = allf[allf["t"] >= cutoff].sort_values("t", ascending=False)
-    allf = allf.drop_duplicates(subset=["title"]).head(max_items)
+
+    def _load(kind: str, tcol: str, srccol: str) -> pd.DataFrame:
+        p = storeio.news_path(store, kind)
+        if not p.exists():
+            return pd.DataFrame(columns=["title", "source", "t"])
+        df = pd.read_parquet(p)
+        out = pd.DataFrame({"title": df["title"], "source": df[srccol],
+                            "t": pd.to_datetime(df[tcol], utc=True)}).dropna(subset=["title"])
+        out = out[out["t"] >= cutoff].sort_values("t", ascending=False)
+        return out.drop_duplicates(subset=["title"])
+
+    rss = _load("rss", "published_utc", "source")
+    gdelt = _load("gdelt", "seen_utc", "domain")
+    if rss.empty and gdelt.empty:
+        return []
+
+    reserve = min(max(0, int(rss_reserve)), len(rss))
+    gdelt_sel = gdelt.head(max(0, max_items - reserve))
+    rss_sel = rss.head(max_items - len(gdelt_sel))          # RSS fills reserve + any GDELT shortfall
+    combined = pd.concat([rss_sel, gdelt_sel], ignore_index=True)  # RSS first -> wins title dedup
+    combined = combined.drop_duplicates(subset=["title"])
+    combined = combined.sort_values("t", ascending=False).head(max_items)
     return [{"title": str(r.title)[:200], "source": str(r.source),
-             "t": str(r.t)} for r in allf.itertuples()]
+             "t": str(r.t)} for r in combined.itertuples()]
 
 
 def refresh_risk_flags(settings: dict) -> dict:
@@ -163,7 +177,8 @@ def refresh_risk_flags(settings: dict) -> dict:
     cfg = settings.get("intel", {})
     store = storeio.store_dir(settings)
     items = _recent_headlines(store, int(cfg.get("scorer_window_hours", 48)),
-                              int(cfg.get("scorer_max_items", 80)))
+                              int(cfg.get("scorer_max_items", 80)),
+                              int(cfg.get("scorer_rss_reserve", 40)))
     scored: list[dict] = []
     if items:
         backend = _llm_backend()

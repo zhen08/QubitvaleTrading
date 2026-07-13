@@ -50,6 +50,7 @@ intel:
   risk_flag_halve_severity: 5     # 负面 sev≥5：该资产目标减半
   scorer_max_items: 80
   scorer_window_hours: 48
+  scorer_rss_reserve: 40          # guarantee curated RSS >= min(this, available) slots so the GDELT firehose can't crowd it out
 
 # ---- 数据质检门槛（Phase 0 放行标准，来自调研报告 §6.6）----
 qc:
