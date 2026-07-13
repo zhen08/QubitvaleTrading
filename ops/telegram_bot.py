@@ -38,6 +38,8 @@ HELP = (
     "/status — per-book equity, return, positions, cash\n"
     "/positions — current positions per book\n"
     "/history [book] [N] — last N trades (default 10); book optional (partial match)\n"
+    "/pnl — per-book PnL, return, fees, trade counts\n"
+    "/signal — latest target weights (decision) per book\n"
     "/risk — current news risk flags\n"
     "/help — this message"
 )
@@ -115,6 +117,37 @@ def cmd_history(settings: dict, store, args: list[str]) -> str:
     return "\n".join(out)
 
 
+def cmd_pnl(settings: dict, store) -> str:
+    lines = ["QVT PnL"]
+    for book in settings["paper"]["books"]:
+        led = _ledger(settings, store, book)
+        eq = led.equity_series()
+        last = float(eq.iloc[-1]) if len(eq) else led.initial_capital
+        pnl = last - led.initial_capital
+        ret = 100.0 * (last / led.initial_capital - 1.0)
+        df = led.trades_df()
+        fees = float(df["fee"].sum()) if len(df) else 0.0
+        n_live = int((df["mode"] == "live").sum()) if len(df) else 0
+        n_catch = int((df["mode"] == "catchup").sum()) if len(df) else 0
+        lines.append(f"\n{book}\n  equity ${last:,.2f}  PnL ${pnl:+,.2f} ({ret:+.2f}%)"
+                     f"\n  fees ${fees:.2f} | trades {len(df)} (live {n_live}/catchup {n_catch})")
+    return "\n".join(lines)
+
+
+def cmd_signal(settings: dict, store) -> str:
+    lines = ["QVT signals (latest decision)"]
+    for book in settings["paper"]["books"]:
+        p = store / "signals" / f"{book}.latest.json"
+        if not p.exists():
+            lines.append(f"\n{book}: (no signal yet)")
+            continue
+        s = json.loads(p.read_text(encoding="utf-8"))
+        tw = ", ".join(f"{k} {100 * v:.2f}%" for k, v in s.get("target_weights", {}).items()) or "flat"
+        lines.append(f"\n{book}\n  decision {s.get('decision_date')} -> effective {s.get('effective_from')}"
+                     f"\n  {tw}\n  gross {100 * s.get('gross_exposure', 0.0):.2f}%")
+    return "\n".join(lines)
+
+
 def cmd_risk(settings: dict) -> str:
     f = load_risk_flags(settings)
     keys = ("generated_at", "scorer", "asset_neg_severity", "market_neg_severity", "stale")
@@ -131,6 +164,10 @@ def handle(cmd: str, args: list[str], settings: dict, store) -> str:
         return cmd_positions(settings, store)
     if cmd == "history":
         return cmd_history(settings, store, args)
+    if cmd == "pnl":
+        return cmd_pnl(settings, store)
+    if cmd == "signal":
+        return cmd_signal(settings, store)
     if cmd == "risk":
         return cmd_risk(settings)
     return f"unknown command /{cmd}\n\n{HELP}"
