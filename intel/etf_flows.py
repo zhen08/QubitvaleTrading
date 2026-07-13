@@ -19,8 +19,11 @@ from data import storeio
 
 log = logging.getLogger("qvt.etf")
 
-# trading symbol -> CoinGlass ETF asset key
+# trading symbol -> ETF asset key. Only BTC/ETH are GATED (mature, deep ETFs whose
+# flow magnitudes fit the $M thresholds). SOL flows are collected + shown for info
+# but not gated (nascent, small-scale ETF — thresholds would never fire meaningfully).
 ASSETS_WITH_ETF = {"BTCUSDT": "BTC", "ETHUSDT": "ETH"}
+DISPLAY_ASSETS = ("BTC", "ETH", "SOL")
 
 
 def load_flows(settings: dict) -> pd.DataFrame | None:
@@ -93,18 +96,23 @@ def etf_summary(settings: dict) -> str:
     now = pd.Timestamp.now(tz="UTC").normalize()
     cfg = _cfg(settings)
     gate = etf_gate_asof(settings, now, df)
+    sym_of = {a: s for s, a in ASSETS_WITH_ETF.items()}
     lines = [f"QVT ETF flows (US spot, {cfg['look']}d trailing net)"]
     state = {"halve": "TRIM (halve adds)", "block": "no adds", None: "ok"}
-    for sym, asset in ASSETS_WITH_ETF.items():
+    for asset in DISPLAY_ASSETS:
         a = df[df["asset"] == asset].sort_values("date").tail(cfg["look"])
         if a.empty:
-            lines.append(f"\n{asset}: no data")
             continue
-        g = gate.get(sym, {})
+        if asset in sym_of:                                   # gated asset
+            tag = state.get(gate.get(sym_of[asset], {}).get("action"), "ok")
+        else:                                                 # SOL: info only
+            tag = "info only (no gate)"
         lines.append(f"\n{asset}: net ${a['net_flow_usd_m'].sum():+,.0f}M "
-                     f"({int((a['net_flow_usd_m'] < 0).sum())}/{len(a)} days out) -> "
-                     f"{state.get(g.get('action'), 'ok')}")
+                     f"({int((a['net_flow_usd_m'] < 0).sum())}/{len(a)} days out) -> {tag}")
         for r in a.itertuples():
             lines.append(f"  {r.date.date()} ${r.net_flow_usd_m:+,.1f}M")
-    lines.append(f"\nthresholds: no-add >= ${cfg['no_add']:,.0f}M out, halve >= ${cfg['trim']:,.0f}M out")
+    if len(lines) == 1:
+        return "QVT ETF flows: data present but no rows in the trailing window."
+    lines.append(f"\nthresholds (BTC/ETH): no-add >= ${cfg['no_add']:,.0f}M out, "
+                 f"halve >= ${cfg['trim']:,.0f}M out")
     return "\n".join(lines)

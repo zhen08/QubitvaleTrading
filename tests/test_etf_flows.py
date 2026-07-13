@@ -1,7 +1,9 @@
-"""ETF-flow risk gate: regime detection (as-of) and engine integration (adds-only)."""
+"""ETF-flow risk gate: regime detection (as-of), engine integration (adds-only),
+and the Farside HTML fallback parser."""
 import pandas as pd
 
 from data import storeio
+from data.collectors.etf_flows import _num, parse_farside
 from execution.paper.engine import _apply_risk_rules
 from intel.etf_flows import etf_gate_asof
 
@@ -97,3 +99,39 @@ def test_halve_cuts_position(tmp_path):
     benign = {"asset_neg_severity": {}, "market_neg_severity": 0}
     adj, notes = _apply_risk_rules({"ETHUSDT": 0.3}, {"ETHUSDT": 0.2}, s, CLEAR, benign, False)
     assert abs(adj["ETHUSDT"] - 0.1) < 1e-9 and any("halve ETHUSDT" in n for n in notes)
+
+
+# ---- Farside HTML fallback parser ----
+
+def test_num_parsing():
+    assert _num("1,234.5") == 1234.5
+    assert _num("(45.6)") == -45.6
+    assert _num("-") == 0.0 and _num("") == 0.0
+    assert _num("(1,000.0)") == -1000.0
+    assert _num("abc") is None
+
+
+FARSIDE_HTML = """
+<html><body>
+<table>
+<tr><th>Date</th><th>IBIT</th><th>FBTC</th><th>GBTC</th><th>Total</th></tr>
+<tr><td>05 Jan 2025</td><td>100.0</td><td>50.0</td><td>(30.0)</td><td>120.0</td></tr>
+<tr><td>06 Jan 2025</td><td>-</td><td>1,234.5</td><td>(1,000.0)</td><td>234.5</td></tr>
+<tr><td>07 Jan 2025</td><td>10</td><td>10</td><td>10</td><td>(45.6)</td></tr>
+<tr><td>Total</td><td>110</td><td>1294.5</td><td>(1020)</td><td>308.9</td></tr>
+<tr><td>Average</td><td>36.7</td><td>431.5</td><td>(340)</td><td>103.0</td></tr>
+</table>
+</body></html>
+"""
+
+
+def test_parse_farside_table():
+    rows = parse_farside(FARSIDE_HTML, "BTC", fetched_at="t")
+    # 3 data rows; Total/Average summary rows skipped (non-date first cell)
+    assert [r["date"].strftime("%Y-%m-%d") for r in rows] == ["2025-01-05", "2025-01-06", "2025-01-07"]
+    assert [r["net_flow_usd_m"] for r in rows] == [120.0, 234.5, -45.6]
+    assert all(r["asset"] == "BTC" and r["source"] == "farside" for r in rows)
+
+
+def test_parse_farside_no_table_is_empty():
+    assert parse_farside("<html><body>Just a moment... (Cloudflare)</body></html>", "SOL") == []
