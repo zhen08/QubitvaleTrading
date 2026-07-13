@@ -56,10 +56,11 @@ def main() -> None:
         if "error" in bs:
             lines.append(f"{book}: ERROR {bs['error'][:80]}")
             continue
-        pos = ", ".join(f"{k}:{v:.5f}" for k, v in bs.get("positions", {}).items()) or "空仓"
+        pos = ", ".join(f"{k}:{v:.5f}" for k, v in bs.get("positions", {}).items()) or "flat"
         lines.append(f"{book}: ${bs.get('equity', '?')} "
-                     f"({bs.get('ret_pct_since_start', 0)}%) | {pos} | "
-                     f"live {len(bs.get('live_trades', []))} 笔")
+                     f"({bs.get('ret_pct_since_start', 0)}%) | "
+                     f"PnL ${bs.get('pnl', 0):+,.2f} | fees ${bs.get('fees', 0):.2f} | "
+                     f"{pos} | live {len(bs.get('live_trades', []))}")
         for n in bs.get("notes", [])[:3]:
             lines.append(f"  · {n}")
     lines.append(f"incidents: {len(summary.get('incidents', []))}")

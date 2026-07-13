@@ -269,6 +269,10 @@ def _run_book(book: str, bcfg: dict, weights: pd.DataFrame,
             100 * (float(eqs.iloc[-1]) / led.initial_capital - 1), 3)
     bs["positions"] = {k: round(v, 8) for k, v in led.positions.items()}
     bs["cash"] = round(led.cash, 2)
+    if "equity" in bs:
+        bs["pnl"] = round(bs["equity"] - led.initial_capital, 2)
+    tdf = led.trades_df()
+    bs["fees"] = round(float(tdf["fee"].sum()), 2) if len(tdf) else 0.0
     return bs
 
 
