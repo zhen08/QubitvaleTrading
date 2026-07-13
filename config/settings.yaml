@@ -51,6 +51,7 @@ intel:
   scorer_max_items: 80
   scorer_window_hours: 48
   scorer_rss_reserve: 40          # guarantee curated RSS >= min(this, available) slots so the GDELT firehose can't crowd it out
+  scorer_dedup_jaccard: 0.6       # near-duplicate collapse: merge headlines with >= this token-overlap (keeps RSS copy)
 
 # ---- 数据质检门槛（Phase 0 放行标准，来自调研报告 §6.6）----
 qc:

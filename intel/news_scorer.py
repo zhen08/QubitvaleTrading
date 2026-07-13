@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -133,8 +134,56 @@ def _score_llm(items: list[dict], endpoint: str, api_key: str, model: str,
         return None
 
 
+def _norm_tokens(title: str) -> frozenset:
+    """Language-folded token set for near-duplicate comparison.
+
+    NFKD-normalize, strip diacritics, lowercase, keep only latin-alnum tokens
+    (>=3 chars or pure digits). Non-latin scripts (CJK/Arabic/Cyrillic) reduce
+    to their shared latin/number tokens — deliberately sparse, so cross-language
+    items only merge on exact token-set equality, never fuzzy (avoids false merges).
+    """
+    s = unicodedata.normalize("NFKD", str(title))
+    s = "".join(c for c in s if not unicodedata.combining(c)).lower()
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return frozenset(t for t in s.split() if len(t) >= 3 or t.isdigit())
+
+
+def _collapse_near_dups(df: pd.DataFrame, threshold: float, min_tokens: int,
+                        merges: list | None = None) -> pd.DataFrame:
+    """Greedy near-duplicate collapse, keeping the first row per cluster.
+
+    Rows are compared in the DataFrame's existing order, so callers should pass
+    the preferred survivor first (RSS before GDELT, newest first). A later row is
+    dropped if its token set is identical to a kept row's, or (when both have
+    >=min_tokens) their Jaccard overlap >= threshold. O(n^2) over the candidate
+    pool (~10^2 items) — negligible.
+    """
+    reps: list[tuple[frozenset, str]] = []
+    keep: list = []
+    for row in df.itertuples():
+        toks = _norm_tokens(row.title)
+        dup_of = None
+        for rtoks, rtitle in reps:
+            if not toks or not rtoks:
+                continue
+            if toks == rtoks:
+                dup_of = rtitle
+                break
+            if min(len(toks), len(rtoks)) >= min_tokens:
+                jac = len(toks & rtoks) / len(toks | rtoks)
+                if jac >= threshold:
+                    dup_of = rtitle
+                    break
+        if dup_of is None:
+            reps.append((toks, str(row.title)))
+            keep.append(row.Index)
+        elif merges is not None:
+            merges.append((str(row.title), dup_of))
+    return df.loc[keep]
+
+
 def _recent_headlines(store: Path, window_hours: int, max_items: int,
-                      rss_reserve: int = 0) -> list[dict]:
+                      rss_reserve: int = 0, dedup_jaccard: float = 0.6) -> list[dict]:
     """Newest headlines in the window, capped at max_items.
 
     RSS is the curated, higher-signal source but low-volume; GDELT is a
@@ -161,11 +210,19 @@ def _recent_headlines(store: Path, window_hours: int, max_items: int,
     if rss.empty and gdelt.empty:
         return []
 
+    # Collapse near-duplicates across the whole pool BEFORE the reserve split, with
+    # RSS first so the curated copy survives a cross-source dup. This frees slots
+    # otherwise eaten by re-syndications / reworded GDELT variants of one story.
+    rss["feed"], gdelt["feed"] = "rss", "gdelt"
+    pool = pd.concat([rss, gdelt], ignore_index=True)
+    pool = _collapse_near_dups(pool, threshold=float(dedup_jaccard), min_tokens=4)
+    rss = pool[pool["feed"] == "rss"]
+    gdelt = pool[pool["feed"] == "gdelt"]
+
     reserve = min(max(0, int(rss_reserve)), len(rss))
     gdelt_sel = gdelt.head(max(0, max_items - reserve))
     rss_sel = rss.head(max_items - len(gdelt_sel))          # RSS fills reserve + any GDELT shortfall
-    combined = pd.concat([rss_sel, gdelt_sel], ignore_index=True)  # RSS first -> wins title dedup
-    combined = combined.drop_duplicates(subset=["title"])
+    combined = pd.concat([rss_sel, gdelt_sel], ignore_index=True)  # RSS first -> wins any residual dup
     combined = combined.sort_values("t", ascending=False).head(max_items)
     return [{"title": str(r.title)[:200], "source": str(r.source),
              "t": str(r.t)} for r in combined.itertuples()]
@@ -178,7 +235,8 @@ def refresh_risk_flags(settings: dict) -> dict:
     store = storeio.store_dir(settings)
     items = _recent_headlines(store, int(cfg.get("scorer_window_hours", 48)),
                               int(cfg.get("scorer_max_items", 80)),
-                              int(cfg.get("scorer_rss_reserve", 40)))
+                              int(cfg.get("scorer_rss_reserve", 40)),
+                              float(cfg.get("scorer_dedup_jaccard", 0.6)))
     scored: list[dict] = []
     if items:
         backend = _llm_backend()
