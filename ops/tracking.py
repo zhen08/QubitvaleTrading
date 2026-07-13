@@ -1,10 +1,10 @@
-"""跟踪复盘 v3：多账本——每本账独立对照（paper vs 模型回放 vs 冻结期望带）。
+"""Tracking review v3: multi-book — each book compared independently (paper vs model replay vs frozen expected band).
 
-口径规则（第二轮 review 确立，全账本一致）：
-  1) 每本账的期望带基准独立冻结（paper/<book>/baseline.*），复盘不随数据更新重估；
-  2) 带 = 冻结 OOS 日收益样本的 block bootstrap 经验分位（固定种子）；
-  3) 日度统计只用 note=='settled' 的权益；
-  4) 模型回放 = 用同期实际数据重放该策略（同期对照，非基准漂移）。
+Basis rules (established in the second review, consistent across all books):
+  1) Each book's expected-band baseline is frozen independently (paper/<book>/baseline.*); the review does not re-estimate it as data updates;
+  2) Band = block-bootstrap empirical quantiles of the frozen OOS daily-return sample (fixed seed);
+  3) Daily statistics use only equity where note=='settled';
+  4) Model replay = replay the strategy on the same-period actual data (same-period comparison, not baseline drift).
 """
 from __future__ import annotations
 
@@ -26,12 +26,12 @@ from strategies.base import load_spot_daily
 
 log = logging.getLogger("qvt.track")
 
-TRAIN_BARS = 730   # 与 Phase 1 协议一致：OOS 从第 730 根起
+TRAIN_BARS = 730   # consistent with the Phase 1 protocol: OOS starts from the 730th bar
 BOOT_N = 4000
 BOOT_BLOCK = 10
 BOOT_SEED = 42
 
-# 账本 → (research 家族, 固定参数)：模型回放与基准构造的单一映射
+# book → (research family, fixed params): the single mapping for model replay and baseline construction
 BOOK_MODEL = {
     "donchian_ensemble": ("donchian", None),
     "tsmom_ensemble": ("tsmom", {"long_short": False, "max_lev": 1.0}),
@@ -44,7 +44,7 @@ def _family_ens(df: pd.DataFrame, family: str, fixed: dict | None) -> pd.Series:
 
 
 def portfolio_model_returns(settings: dict, book: str) -> pd.Series:
-    """该账本策略的模型日收益（全历史、净成本）——同期对照用。"""
+    """This book's strategy model daily returns (full history, net of costs) — for same-period comparison."""
     family, fixed = BOOK_MODEL[book]
     store = storeio.store_dir(settings)
     legs = {sym: _family_ens(load_spot_daily(store, sym), family, fixed)
@@ -55,7 +55,7 @@ def portfolio_model_returns(settings: dict, book: str) -> pd.Series:
 
 
 def build_phase1_portfolio(settings: dict, book: str) -> pd.Series:
-    """该账本策略的 Phase 1 组合口径 OOS 日收益（冻结基准的原料）。"""
+    """This book's strategy Phase 1 portfolio-basis OOS daily returns (raw material for the frozen baseline)."""
     family, fixed = BOOK_MODEL[book]
     store = storeio.store_dir(settings)
     legs = [_family_ens(load_spot_daily(store, sym), family, fixed).iloc[TRAIN_BARS:]
@@ -63,7 +63,7 @@ def build_phase1_portfolio(settings: dict, book: str) -> pd.Series:
     return pd.concat(legs, axis=1).dropna().mean(axis=1)
 
 
-# ---------------- 基准冻结（按账本） ----------------
+# ---------------- baseline freeze (per book) ----------------
 
 def baseline_paths(store: Path, book: str) -> tuple[Path, Path]:
     d = store / "paper" / book
@@ -107,7 +107,7 @@ def load_baseline(settings: dict, book: str) -> tuple[dict, np.ndarray] | None:
 def bootstrap_band(rets: np.ndarray, horizon: int,
                    n_boot: int = BOOT_N, block: int = BOOT_BLOCK,
                    seed: int = BOOT_SEED) -> dict:
-    """冻结样本的 block bootstrap：n 日累计收益经验分位数（固定种子）。"""
+    """Block bootstrap of the frozen sample: empirical quantiles of n-day cumulative return (fixed seed)."""
     rng = np.random.default_rng(seed)
     t = len(rets)
     n_blocks = max(1, math.ceil(horizon / block))
@@ -120,16 +120,16 @@ def bootstrap_band(rets: np.ndarray, horizon: int,
     return {"p2_5": q[0], "p10": q[1], "p50": q[2], "p90": q[3], "p97_5": q[4]}
 
 
-# ---------------- 复盘（全账本） ----------------
+# ---------------- review (all books) ----------------
 
 def _book_section(settings: dict, book: str, bcfg: dict, store: Path) -> tuple[list[str], dict]:
     led = Ledger.load_or_init(store, float(bcfg["initial_capital_usdt"]),
                               str(bcfg["start_date"]), book=book)
     settled = led.equity_series(settled_only=True)
-    lines = [f"## 账本：{book}（起始 {bcfg['start_date']}，${bcfg['initial_capital_usdt']:,}）", ""]
+    lines = [f"## Book: {book} (started {bcfg['start_date']}, ${bcfg['initial_capital_usdt']:,})", ""]
     stats: dict = {"settled_days": int(len(settled))}
     if len(settled) < 1:
-        lines.append("尚无已结算权益记录，暂无统计。")
+        lines.append("No settled equity records yet, so no statistics available.")
         return lines + [""], stats
 
     start_anchor = pd.Timestamp(bcfg["start_date"], tz="UTC") - pd.Timedelta(days=1)
@@ -146,10 +146,10 @@ def _book_section(settings: dict, book: str, bcfg: dict, store: Path) -> tuple[l
     if frozen:
         meta, rets = frozen
         band = bootstrap_band(rets, max(n, 1))
-        band_src = f"冻结基准（{meta['frozen_at'][:10]}，{meta['n_days']} 日）bootstrap"
+        band_src = f"frozen baseline ({meta['frozen_at'][:10]}, {meta['n_days']} days) bootstrap"
     else:
         band = bootstrap_band(build_phase1_portfolio(settings, book).to_numpy(), max(n, 1))
-        band_src = "**非正式**（未冻结——运行 python -m scripts.freeze_baseline）"
+        band_src = "**informal** (not frozen — run python -m scripts.freeze_baseline)"
     in80 = band["p10"] <= cum_paper <= band["p90"]
     in95 = band["p2_5"] <= cum_paper <= band["p97_5"]
 
@@ -163,17 +163,17 @@ def _book_section(settings: dict, book: str, bcfg: dict, store: Path) -> tuple[l
                  weeks=round(weeks, 1), baseline_frozen=bool(frozen))
 
     lines += [
-        f"窗口：{n} 个已结算日（≈{weeks:.1f}/6 周）；带基准：{band_src}",
+        f"Window: {n} settled day(s) (≈{weeks:.1f}/6 weeks); band baseline: {band_src}",
         "",
-        "| 指标 | Paper | 模型回放 | 备注 |",
+        "| Metric | Paper | Model replay | Note |",
         "|---|---|---|---|",
-        f"| 累计收益 | {100*cum_paper:.2f}% | {100*cum_model:.2f}% | 差 {1e4*(cum_paper-cum_model):.0f} bps |",
-        f"| 年化 Sharpe | {sharpe(paper_ret):.2f} | {sharpe(model):.2f} | |",
-        (f"| TE(年化) | {100*te_ann:.2f}% | — | 目标 <2% |" if te_ann == te_ann
-         else "| TE | 样本不足 | — | |"),
-        f"| 期望带 80%/95% | {100*band['p10']:.2f}%~{100*band['p90']:.2f}% | ±({100*band['p2_5']:.2f}%~{100*band['p97_5']:.2f}%) | {'带内 ✅' if in95 else '**出 95% 带 ❌**'} |",
-        f"| 成交/费用 | live {n_live} / catchup {n_catch} | ${fees:.2f} | |",
-        f"| 持仓 | {led.positions or '空仓'} | 现金 ${led.cash:,.2f} | |",
+        f"| Cumulative return | {100*cum_paper:.2f}% | {100*cum_model:.2f}% | diff {1e4*(cum_paper-cum_model):.0f} bps |",
+        f"| Annualized Sharpe | {sharpe(paper_ret):.2f} | {sharpe(model):.2f} | |",
+        (f"| TE (annualized) | {100*te_ann:.2f}% | — | target <2% |" if te_ann == te_ann
+         else "| TE | insufficient sample | — | |"),
+        f"| Expected band 80%/95% | {100*band['p10']:.2f}%~{100*band['p90']:.2f}% | ±({100*band['p2_5']:.2f}%~{100*band['p97_5']:.2f}%) | {'in band ✅' if in95 else '**outside 95% band ❌**'} |",
+        f"| Fills/fees | live {n_live} / catchup {n_catch} | ${fees:.2f} | |",
+        f"| Positions | {led.positions or 'flat'} | cash ${led.cash:,.2f} | |",
         "",
     ]
     for r in trades.tail(5).itertuples():
@@ -189,12 +189,13 @@ def build_review(settings: dict) -> tuple[str, dict]:
     earliest = min(str(b["start_date"]) for b in books.values())
     inc = incident_log.counts_since(store, earliest)
 
-    lines = [f"# Paper 复盘（多账本）— {pd.Timestamp.now(tz='UTC').date()}", "",
-             f"运维事故（自 {earliest}）：P0={inc['P0']} P1={inc['P1']} P2={inc['P2']} P3={inc['P3']}"
-             f"（明细 data/store/ops/incidents.parquet）；P0 门槛：{'✅ 0' if inc['P0'] == 0 else '❌'}",
+    lines = [f"# Paper Review (multi-book) — {pd.Timestamp.now(tz='UTC').date()}", "",
+             f"Operational incidents (since {earliest}): P0={inc['P0']} P1={inc['P1']} P2={inc['P2']} P3={inc['P3']}"
+             f" (details in data/store/ops/incidents.parquet); P0 gate: {'✅ 0' if inc['P0'] == 0 else '❌'}",
              "",
-             "> 两本账均为**未经统计认证的研究候选**（Phase 1 修订判定），属探索性验证；"
-             "Phase 3 选择纪律（ex-ante）：两本都达标 → 各半仓部署，不选赢家。",
+             "> Both books are **uncertified research candidates** (Phase 1 revised verdict), so this is "
+             "exploratory validation; Phase 3 selection discipline (ex-ante): if both books pass → deploy "
+             "each at half size, do not pick a winner.",
              ""]
     all_stats: dict = {"incidents": inc}
     for book, bcfg in books.items():

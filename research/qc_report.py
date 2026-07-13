@@ -1,13 +1,13 @@
 """Phase 0 data quality checks + report.
 
-门槛（config/settings.yaml → qc，源自调研报告 §6.6）：
-  1) 结构：每条 K 线序列缺口率 ≤ max_missing_pct；重复时间戳 = 0；OHLC 违例 = 0；
-  2) 新鲜度：日线最后一根距今 ≤ freshness_max_age_days 天（Vision 日度文件 T+1 发布）；
-  3) 跨源：最近 cross_window_days 个已结算日的现货日线收盘，
-     vs CoinGecko（对齐规则：CG 在 D+1 00:00 UTC 的快照价 ↔ 我们 D 日收盘）
-     vs Coinbase（同日桶收盘直接对比），任意一天偏差 < cross_max_diff_pct%；
-  4) Bitget 一致性（信息项+门槛）：Bitget 最近已结算日收盘 vs 本库现货收盘 < 0.5%。
-资金费率做 sanity 检查（幅度/节奏），只警告不设门槛。
+Gates (config/settings.yaml → qc, from research report §6.6):
+  1) Structure: each K-line series gap rate ≤ max_missing_pct; duplicate timestamps = 0; OHLC violations = 0;
+  2) Freshness: the last daily bar is ≤ freshness_max_age_days days old (Vision daily files publish T+1);
+  3) Cross-source: spot daily close over the last cross_window_days settled days,
+     vs CoinGecko (alignment rule: CG's D+1 00:00 UTC snapshot price ↔ our D-day close)
+     vs Coinbase (same-day bucket close compared directly), deviation on any day < cross_max_diff_pct%;
+  4) Bitget consistency (informational + gate): Bitget's most recent settled close vs our spot close < 0.5%.
+Funding rates get a sanity check (magnitude/cadence), warning-only with no gate.
 """
 from __future__ import annotations
 
@@ -50,23 +50,23 @@ class QCResult:
 # ---------------- structural checks ----------------
 
 def check_klines_structure(df: pd.DataFrame, tf: str, qc_cfg: dict, key: str, res: QCResult) -> None:
-    """R4 加固：NaN 行、时间戳网格错位、网格外多余记录均计为违例；
-    missing 基于对齐网格计算且不可为负。"""
+    """R4 hardening: NaN rows, timestamp-grid misalignment, and off-grid extra records
+    all count as violations; missing is computed against the aligned grid and cannot be negative."""
     delta = TF_DELTA[tf]
     ts = pd.to_datetime(df["ts"], utc=True)
 
-    # 1) NaN 行（任一 OHLCV 缺失）
+    # 1) NaN rows (any OHLCV missing)
     ohlcv = ["open", "high", "low", "close", "volume"]
     nan_rows = int(df[ohlcv].isna().any(axis=1).sum())
 
-    # 2) 网格对齐：时间戳必须落在 UTC 网格上（1d=00:00, 1h=整点, 4h=00/04/08…）
-    #    用 floor 比较（单位无关——pandas 3.0 datetime 默认精度已从 ns 改为 us）
+    # 2) Grid alignment: timestamps must land on the UTC grid (1d=00:00, 1h=on the hour, 4h=00/04/08…)
+    #    Compare via floor (unit-independent — pandas 3.0 changed the default datetime precision from ns to us)
     floor_freq = {"1h": "h", "4h": "4h", "1d": "D"}[tf]
     aligned_mask = ts == ts.dt.floor(floor_freq)
     misaligned = int((~aligned_mask).sum())
     aligned = ts[aligned_mask]
 
-    # 3) 缺口（仅在对齐网格上计算，max(0,·) 防负值）
+    # 3) Gaps (computed only on the aligned grid, max(0,·) guards against negatives)
     dups = int(ts.duplicated().sum())
     if len(aligned):
         first, last = aligned.min(), aligned.max()
@@ -77,7 +77,7 @@ def check_klines_structure(df: pd.DataFrame, tf: str, qc_cfg: dict, key: str, re
         first = last = pd.NaT
         missing, missing_pct = len(df), 100.0
 
-    # 4) OHLC 一致性（仅对非 NaN 行判定，NaN 行已单独计违例）
+    # 4) OHLC consistency (judged only on non-NaN rows; NaN rows already counted as violations)
     valid = df[ohlcv].notna().all(axis=1)
     d = df[valid]
     viol = int(
@@ -253,15 +253,15 @@ def run(settings: dict) -> tuple[str, bool]:
     check_funding(store, settings, res)
 
     lines = [
-        f"# Phase 0 数据质检报告 — {utc_today().date()}",
+        f"# Phase 0 Data QC Report — {utc_today().date()}",
         "",
-        f"结论：**{'PASS ✅' if res.gate_passed else 'FAIL ❌'}**（门槛项全部通过才算 PASS；gate=否 为信息项）",
+        f"Conclusion: **{'PASS ✅' if res.gate_passed else 'FAIL ❌'}** (PASS only if all gate items pass; gate=no is informational)",
         "",
-        "| 检查 | 结果 | 门槛 | 详情 |",
+        "| Check | Result | Gate | Details |",
         "|---|---|---|---|",
     ]
     for c in res.checks:
-        lines.append(f"| {c.name} | {'✅' if c.passed else '❌'} | {'是' if c.gate else '否'} | {c.detail} |")
+        lines.append(f"| {c.name} | {'✅' if c.passed else '❌'} | {'yes' if c.gate else 'no'} | {c.detail} |")
     report = "\n".join(lines) + "\n"
 
     out_dir = Path(__file__).resolve().parent / "reports"

@@ -1,8 +1,9 @@
-"""Phase 1 orchestrator: baselines × walk-forward × DSR/PBO → 诚实研究报告。
+"""Phase 1 orchestrator: baselines × walk-forward × DSR/PBO → honest research report.
 
-门槛（调研报告 §6.6，ex-ante）：某策略族在净成本、walk-forward 样本外满足
-  OOS 年化 Sharpe > 0 且 DSR ≥ 0.95（按该族网格试验数校正）
-才有资格进入 Phase 2 模拟盘。全样本最优列仅作为"过拟合上界"展示，不参与判定。
+Gate (research report §6.6, ex-ante): a strategy family qualifies for Phase 2 paper trading
+only if, net of costs and walk-forward out-of-sample, it satisfies
+  OOS annualized Sharpe > 0 and DSR ≥ 0.95 (corrected by that family's grid trial count).
+The full-sample-best column is shown only as an "overfitting upper bound" and does not enter the verdict.
 """
 from __future__ import annotations
 
@@ -27,14 +28,15 @@ FIXED_KWARGS = {
     "um": {"tsmom": {"long_short": True, "max_lev": 2.0}},
 }
 GATE_DSR = 0.95
-DEPLOY_FAMILY = "donchian"   # 部署形态所选族——统计认证必须针对这个对象计算
+DEPLOY_FAMILY = "donchian"   # the family chosen for the deployment form — certification must target this object
 
-# 2026-07-13 修订（review R1）：原 gate 只按"族内网格试验数"校正 DSR，低估了实际
-# 发生的选择（4 族 × 3 币 × 2 市场 × 成本口径 × 选参/集成切换）。现拆成两级：
-#   研究候选（research candidate）：族内口径 OOS>0 且族内 DSR≥0.95（弱标准，供筛选）
-#   统计认证（certification）    ：**部署对象**（跨币参数集成组合）在 N=4（族选择）
-#                                  与 N=32（组合级参数×族试验）两种校正下 DSR 均 ≥0.95
-# 认证未过 → Phase 2 只能作为"探索性 paper 验证"，不构成策略认证。
+# 2026-07-13 revision (review R1): the original gate corrected DSR only by the "within-family grid
+# trial count", underestimating the selection that actually occurred (4 families × 3 coins × 2 markets ×
+# cost basis × select-param/ensemble switch). Now split into two tiers:
+#   research candidate: within-family OOS>0 and within-family DSR≥0.95 (weak standard, for screening)
+#   certification     : the **deployment object** (cross-coin parameter-ensemble portfolio) has DSR ≥0.95
+#                       under both N=4 (family selection) and N=32 (portfolio-level parameter×family trials)
+# If certification fails → Phase 2 can only serve as "exploratory paper validation", not strategy certification.
 
 
 def _load(store: Path, market: str, symbol: str) -> pd.DataFrame:
@@ -64,14 +66,14 @@ def run_market(store, symbol: str, market: str, cost_model, funding_by_day):
                                       metrics.trials_sr_variance(vr))
         pbo = metrics.pbo_cscv(vr)
         s = metrics.summary(oos, "1d")
-        # 参数集成（族内 4~12 个变体等权，无选参）——高 PBO 时的稳健部署形态
+        # Parameter ensemble (4~12 within-family variants equal-weight, no param selection) — the robust deployment form when PBO is high
         ens_oos = vr.mean(axis=1).reindex(oos.index)
         ens_map[family] = ens_oos
         rows.append(
             {
                 "symbol": symbol, "market": market, "family": family,
                 "cost": cost_model.name,
-                "full_best_sharpe": round(full_best_sr, 2),   # 过拟合上界
+                "full_best_sharpe": round(full_best_sr, 2),   # overfitting upper bound
                 "oos_sharpe": s["sharpe"],
                 "oos_cagr_pct": s["cagr_pct"],
                 "oos_maxdd_pct": s["max_dd_pct"],
@@ -89,7 +91,7 @@ def run_market(store, symbol: str, market: str, cost_model, funding_by_day):
                  symbol, market, family, s["sharpe"], dsr, rows[-1]["pbo"],
                  rows[-1]["family_gate"])
 
-    # meta-DSR：对每一行都用全部 32 个试验校正（跨族选择也算试验——更诚实的数字）
+    # meta-DSR: correct every row by all 32 trials (cross-family selection also counts as a trial — a more honest number)
     vr_all = pd.concat(all_vr, axis=1)
     var_all = metrics.trials_sr_variance(vr_all)
     for r in rows:
@@ -113,7 +115,7 @@ def run_all() -> tuple[pd.DataFrame, dict, dict, pd.DataFrame]:
         for market, cm, fnd in (
             ("spot", SPOT_TAKER, None),
             ("um", UM_TAKER, fund_day),
-            ("um", UM_MAKER, fund_day),      # maker 敏感性
+            ("um", UM_MAKER, fund_day),      # maker sensitivity
         ):
             rows, wfs, ens_map, vr_map = run_market(store, symbol, market, cm, fnd)
             all_rows.extend(rows)
@@ -127,8 +129,8 @@ def run_all() -> tuple[pd.DataFrame, dict, dict, pd.DataFrame]:
 
         carry_out[symbol] = run_carry_suite(funding)
 
-    # ---- 部署级组合与两级 DSR 校正（R1）----
-    # 族级组合：每族 = 参数集成 × 3 币等权（族选择 N=4）
+    # ---- deployment-level portfolio and two-tier DSR correction (R1) ----
+    # Family-level portfolio: each family = parameter ensemble × 3 coins equal-weight (family selection N=4)
     port_rows = []
     port_series: dict[str, pd.Series] = {}
     for family in GRIDS:
@@ -137,9 +139,9 @@ def run_all() -> tuple[pd.DataFrame, dict, dict, pd.DataFrame]:
         port_rows.append({"family": family, **metrics.summary(port_series[family], "1d")})
     var_n4 = metrics.trials_sr_variance(pd.DataFrame(port_series))
 
-    # 组合级试验宇宙：每个 (族, 参数) 的跨币等权组合共 32 条 → N=32 的保守校正。
-    # 第二轮 review 修正：试验方差必须与认证对象同一 OOS 时间窗口（去掉前 730 根
-    # 训练 warmup 段），否则窗口不匹配使方差失真。
+    # Portfolio-level trial universe: each (family, params) cross-coin equal-weight portfolio, 32 in total → N=32 conservative correction.
+    # Second-review fix: the trial variance must use the same OOS time window as the certification object
+    # (drop the first 730 training-warmup bars), otherwise the window mismatch distorts the variance.
     TRAIN_BARS = 730
     param_ports = {}
     symbols = list(spot_vr)
@@ -184,67 +186,72 @@ def write_report(df: pd.DataFrame, folds: dict, carry: dict,
                          and dep["sharpe"] > 0)
     else:
         dep, certified = None, False
-    gate_passed = certified   # 对外唯一的"通过"含义 = 统计认证
+    gate_passed = certified   # the only external meaning of "pass" = statistical certification
 
     cols = ["symbol", "market", "family", "cost", "full_best_sharpe", "oos_sharpe",
             "oos_cagr_pct", "oos_maxdd_pct", "dsr", "dsr_meta32", "pbo",
             "ens_oos_sharpe", "bh_oos_sharpe", "family_gate"]
 
     parts = [
-        f"# Phase 1 研究报告 — {date}",
+        f"# Phase 1 Research Report — {date}",
         "",
-        "**协议（ex-ante）**：参数网格先于结果固定（32 试验/市场）；2 年训练 → 6 个月样本外滚动，"
-        "训练期净 Sharpe 选参，训练期最优 ≤0 则该折空仓；成本 = 手续费 + √冲击滑点"
-        "（现货每边 10bps+滑点，USDT-M taker 6bps / maker 2bps；$10k 名义）；合约含逐日资金费"
-        "（Binance 序列作 Bitget 代理）。`full_best_sharpe` 为全样本事后最优（过拟合上界，"
-        "仅供对照）；判定只看 walk-forward OOS。",
+        "**Protocol (ex-ante)**: the parameter grid is fixed before results (32 trials/market); 2-year "
+        "train → 6-month out-of-sample rolling, parameters selected by net Sharpe over the training period, "
+        "and the fold goes flat if the training-period best is ≤0; cost = fees + √impact slippage "
+        "(spot 10bps per side + slippage, USDT-M taker 6bps / maker 2bps; $10k notional); futures include "
+        "daily funding (Binance series used as a Bitget proxy). `full_best_sharpe` is the full-sample "
+        "post-hoc best (overfitting upper bound, for reference only); the verdict looks only at walk-forward OOS.",
         "",
-        "## 门槛判定（2026-07-13 修订：两级标准，认证针对部署对象）",
+        "## Gate verdict (2026-07-13 revision: two-tier standard, certification targets the deployment object)",
         "",
-        f"**研究候选：{'PASS ✅' if candidate_pass else 'FAIL ❌'}**"
-        f"（族内口径：OOS Sharpe>0 且族内 DSR≥{GATE_DSR}；达标 {len(passers)} 行）",
+        f"**Research candidate: {'PASS ✅' if candidate_pass else 'FAIL ❌'}**"
+        f" (within-family basis: OOS Sharpe>0 and within-family DSR≥{GATE_DSR}; {len(passers)} rows qualify)",
         "",
-        f"**统计认证：{'PASS ✅' if certified else 'FAIL ❌ — 未通过'}**"
-        + (f"（部署对象 = {DEPLOY_FAMILY} 参数集成×3 币组合："
-           f"DSR(N=4 族选择)={dep['dsr_n4']}, DSR(N=32 组合级参数×族)={dep['dsr_n32']}，"
-           f"要求两者均 ≥{GATE_DSR}）" if dep is not None else ""),
+        f"**Statistical certification: {'PASS ✅' if certified else 'FAIL ❌ — not passed'}**"
+        + (f" (deployment object = {DEPLOY_FAMILY} parameter ensemble × 3-coin portfolio: "
+           f"DSR(N=4 family selection)={dep['dsr_n4']}, DSR(N=32 portfolio-level parameter×family)={dep['dsr_n32']}, "
+           f"both required to be ≥{GATE_DSR})" if dep is not None else ""),
         "",
-        "> 修订说明：原版 gate 只按族内试验数校正 DSR，低估了实际发生的选择"
-        "（4 族×3 币×2 市场×成本口径×选参/集成切换），且认证对象与部署对象不一致"
-        "（PBO 0.66–0.92 亦属强警告）。**认证未通过时，Phase 2 定位为探索性 paper 验证，"
-        "不构成策略认证**；`family_gate` 列仅为族内弱口径，供筛选参考。",
+        "> Revision note: the original gate corrected DSR only by the within-family trial count, which "
+        "underestimated the selection that actually occurred (4 families × 3 coins × 2 markets × cost basis "
+        "× select-param/ensemble switch), and the certification object did not match the deployment object "
+        "(PBO 0.66–0.92 is also a strong warning). **When certification does not pass, Phase 2 is positioned "
+        "as exploratory paper validation and does not constitute strategy certification**; the `family_gate` "
+        "column is only a weak within-family basis for screening reference.",
         "",
-        "### 研究候选（族内口径达标行）",
+        "### Research candidates (rows qualifying on the within-family basis)",
         "",
         _md_table(passers, ["symbol", "market", "family", "oos_sharpe", "dsr",
                             "dsr_meta32", "pbo", "ens_oos_sharpe",
                             "ens_oos_maxdd_pct", "bh_oos_sharpe"])
-        if candidate_pass else "（无）",
+        if candidate_pass else "(none)",
         "",
-        "## 主结果（walk-forward 样本外，净成本）",
+        "## Main results (walk-forward out-of-sample, net of costs)",
         "",
         _md_table(df.sort_values(["symbol", "market", "family"]), cols),
         "",
-        "## 跨币等权组合（现货 taker 成本；每族 = 参数集成 × 3 币等权）",
+        "## Cross-coin equal-weight portfolio (spot taker cost; each family = parameter ensemble × 3 coins equal-weight)",
         "",
-        "构造中唯一的自由度是**选哪一族**（N=4 试验；无选参、无选币），窗口为三币 OOS 交集。"
-        "这是最接近实际部署形态的数字，也是 DSR 校正最少受选择污染的口径。",
+        "The only degree of freedom in the construction is **which family to pick** (N=4 trials; no parameter "
+        "selection, no coin selection); the window is the three-coin OOS intersection. This is the number "
+        "closest to the actual deployment form, and the basis where the DSR correction is least contaminated by selection.",
         "",
         _md_table(portfolio, ["family", "sharpe", "cagr_pct", "ann_vol_pct",
                               "max_dd_pct", "n_bars", "dsr_n4", "dsr_n32"])
         if portfolio is not None else "",
         "",
-        "## 资金费率 carry 模拟（delta 中性，1x，不属于预测类门槛）",
+        "## Funding-rate carry simulation (delta neutral, 1x, not a prediction-class gate)",
         "",
-        "> ⚠️ 本模拟只含资金费收入与出入场成本，**未建模**极端行情下的平仓滑点尖峰、"
-        "基差瞬时走阔与保证金链条（BIS WP1087：carry 本质是崩盘风险补偿），"
-        "表中 Sharpe 显著高估平稳性，实际应按'高个位数 APR + 罕见尾部事件'理解。",
+        "> ⚠️ This simulation includes only funding income and entry/exit costs; it does **not** model "
+        "close-out slippage spikes in extreme conditions, instantaneous basis blowouts, or the margin chain "
+        "(BIS WP1087: carry is essentially compensation for crash risk). The Sharpe in the table substantially "
+        "overstates stability; interpret the reality as 'high-single-digit APR + rare tail events'.",
         "",
     ]
     for sym, results in carry.items():
-        parts.append(f"### {sym}（Binance 资金费 2020→今）")
+        parts.append(f"### {sym} (Binance funding 2020→now)")
         parts.append("")
-        parts.append("| 变体 | 净APR% | Sharpe | MaxDD% | 在场时间 | 往返次数 | 期间平均资金费APR% |")
+        parts.append("| variant | net APR% | Sharpe | MaxDD% | time in market | round trips | avg funding APR% over period |")
         parts.append("|---|---|---|---|---|---|---|")
         for r in results:
             parts.append(
@@ -252,47 +259,52 @@ def write_report(df: pd.DataFrame, folds: dict, carry: dict,
                 f"{r.time_in_market:.0%} | {r.n_roundtrips} | {r.avg_funding_apr_pct} |")
         parts.append("")
 
-    # ---- 自动结论 ----
+    # ---- automatic conclusions ----
     if portfolio is not None and len(portfolio):
         bp = portfolio.loc[portfolio["sharpe"].idxmax()]
         parts += [
-            "## 结论",
+            "## Conclusions",
             "",
-            f"1. **两级判定**：研究候选{'通过' if candidate_pass else '未通过'}"
-            + (f"（{', '.join(sorted(set(passers['symbol'])))} 现货 "
-               f"{', '.join(sorted(set(passers['family'])))}，族内 DSR 0.96–0.98）" if candidate_pass else "")
-            + f"；**统计认证{'通过' if certified else '未通过'}**——部署组合 "
-            + (f"DSR(N=4)={dep['dsr_n4']}、DSR(N=32)={dep['dsr_n32']}，低于 {GATE_DSR} 门槛。"
+            f"1. **Two-tier verdict**: research candidate {'passes' if candidate_pass else 'does not pass'}"
+            + (f" ({', '.join(sorted(set(passers['symbol'])))} spot "
+               f"{', '.join(sorted(set(passers['family'])))}, within-family DSR 0.96–0.98)" if candidate_pass else "")
+            + f"; **statistical certification {'passes' if certified else 'does not pass'}** — deployment portfolio "
+            + (f"DSR(N=4)={dep['dsr_n4']}, DSR(N=32)={dep['dsr_n32']}, below the {GATE_DSR} threshold."
                if dep is not None and not certified else ""),
             "",
-            f"2. **证据强度的定性**：单市场 meta-DSR(32) 仅 "
-            f"{passers['dsr_meta32'].min():.2f}–{passers['dsr_meta32'].max():.2f}，"
-            f"PBO 0.66–0.92 属强警告（族内参数排名不稳定，集成只消除选参风险、不消除族级不确定性）。"
-            "支撑点：三币方向一致、参数集成后稳健、与文献（JFQA 2025 CTREND）同向。"
-            "定性为**未经认证的研究候选**：有真实但中等强度的证据，只配探索性模拟验证，"
-            "不构成任何实盘部署依据。",
+            f"2. **Qualitative strength of evidence**: single-market meta-DSR(32) is only "
+            f"{passers['dsr_meta32'].min():.2f}–{passers['dsr_meta32'].max():.2f}, and "
+            f"PBO 0.66–0.92 is a strong warning (within-family parameter rankings are unstable; the ensemble "
+            "only removes parameter-selection risk, not family-level uncertainty). Supporting points: the three "
+            "coins agree in direction, the parameter ensemble is robust, and it agrees with the literature "
+            "(JFQA 2025 CTREND). Qualitatively an **uncertified research candidate**: real but moderate-strength "
+            "evidence, worthy only of exploratory paper validation, not any basis for live deployment.",
             "",
-            f"3. **探索性 paper 验证对象（非认证策略）**：`{bp['family']}` 参数集成 × 3 币等权（现货长平）。"
-            f"组合期望特征（净成本、3.9 年 OOS 交集）：Sharpe ≈ {bp['sharpe']}, "
-            f"CAGR ≈ {bp['cagr_pct']}%, 年化波动 ≈ {bp['ann_vol_pct']}%, MaxDD ≈ {bp['max_dd_pct']}%。"
-            "tsmom 集成（低波动、MaxDD −12%）作为分散候选在模拟盘并行观察（该组合未预注册，只观察不部署）。",
+            f"3. **Exploratory paper validation object (not a certified strategy)**: `{bp['family']}` parameter "
+            f"ensemble × 3 coins equal-weight (spot long/flat). Expected portfolio characteristics (net of costs, "
+            f"3.9-year OOS intersection): Sharpe ≈ {bp['sharpe']}, "
+            f"CAGR ≈ {bp['cagr_pct']}%, annualized vol ≈ {bp['ann_vol_pct']}%, MaxDD ≈ {bp['max_dd_pct']}%. "
+            "The tsmom ensemble (low vol, MaxDD −12%) is observed in parallel in the paper book as a "
+            "diversification candidate (this portfolio is not pre-registered; observed only, not deployed).",
             "",
-            "4. **执行市场选现货**：um 全面弱于 spot（资金费拖累 + 样本期差异），且换手极低使 "
-            "maker/taker 敏感性可忽略——现货执行还天然消除杠杆与强平风险。",
+            "4. **Execution market: spot**: um is uniformly weaker than spot (funding drag + sample-period "
+            "differences), and turnover is so low that maker/taker sensitivity is negligible — spot execution "
+            "also naturally eliminates leverage and liquidation risk.",
             "",
-            "5. **carry**：BTC/ETH always-on 净 APR ~6–7%（对尾部风险打折后理解），SOL 平均资金费≈0，"
-            "**必须**带阈值开关。carry 执行器按计划留在 Phase 3。",
+            "5. **carry**: BTC/ETH always-on net APR ~6–7% (understood after discounting for tail risk); SOL "
+            "average funding ≈ 0, so a threshold switch is **required**. The carry executor stays in Phase 3 as planned.",
             "",
-            "6. **对照组行为正常**：RSI 均值回归在组合口径垫底（0.35）——流程对好坏策略有区分度，"
-            "这是方法论自检通过的信号。",
+            "6. **Control group behaves normally**: RSI mean-reversion is at the bottom on the portfolio basis "
+            "(0.35) — the process discriminates between good and bad strategies, a sign that the methodology "
+            "self-check passes.",
             "",
         ]
-    parts.append("## 附录：各市场最优族的逐折记录")
+    parts.append("## Appendix: fold-by-fold record of each market's best family")
     parts.append("")
     for key, fl in folds.items():
         parts.append(f"### {key}")
         parts.append("")
-        parts.append("| 折(OOS窗口) | 选中参数 | train SR/期 | OOS SR/期 |")
+        parts.append("| fold (OOS window) | selected params | train SR/period | OOS SR/period |")
         parts.append("|---|---|---|---|")
         for f in fl:
             parts.append(f"| {f['fold_start']}→{f['fold_end']} | {f['chosen']} | "

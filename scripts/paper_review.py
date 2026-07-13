@@ -1,4 +1,4 @@
-"""生成 paper 周度复盘报告（paper vs 模型回放 vs Phase1 期望带）。
+"""Generate the weekly paper review report (paper vs model replay vs Phase 1 expected band).
 
 Usage: python -m scripts.paper_review
 """
