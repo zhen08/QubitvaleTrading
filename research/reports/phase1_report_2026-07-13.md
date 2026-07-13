@@ -1,16 +1,16 @@
-# Phase 1 研究报告 — 2026-07-13
+# Phase 1 Research Report — 2026-07-13
 
-**协议（ex-ante）**：参数网格先于结果固定（32 试验/市场）；2 年训练 → 6 个月样本外滚动，训练期净 Sharpe 选参，训练期最优 ≤0 则该折空仓；成本 = 手续费 + √冲击滑点（现货每边 10bps+滑点，USDT-M taker 6bps / maker 2bps；$10k 名义）；合约含逐日资金费（Binance 序列作 Bitget 代理）。`full_best_sharpe` 为全样本事后最优（过拟合上界，仅供对照）；判定只看 walk-forward OOS。
+**Protocol (ex-ante)**: the parameter grid is fixed before results (32 trials/market); 2-year train → 6-month out-of-sample rolling, parameters selected by net Sharpe over the training period, and the fold goes flat if the training-period best is ≤0; cost = fees + √impact slippage (spot 10bps per side + slippage, USDT-M taker 6bps / maker 2bps; $10k notional); futures include daily funding (Binance series used as a Bitget proxy). `full_best_sharpe` is the full-sample post-hoc best (overfitting upper bound, for reference only); the verdict looks only at walk-forward OOS.
 
-## 门槛判定（2026-07-13 修订：两级标准，认证针对部署对象）
+## Gate verdict (2026-07-13 revision: two-tier standard, certification targets the deployment object)
 
-**研究候选：PASS ✅**（族内口径：OOS Sharpe>0 且族内 DSR≥0.95；达标 3 行）
+**Research candidate: PASS ✅** (within-family basis: OOS Sharpe>0 and within-family DSR≥0.95; 3 rows qualify)
 
-**统计认证：FAIL ❌ — 未通过**（部署对象 = donchian 参数集成×3 币组合：DSR(N=4 族选择)=0.868, DSR(N=32 组合级参数×族)=0.751，要求两者均 ≥0.95）
+**Statistical certification: FAIL ❌ — not passed** (deployment object = donchian parameter ensemble × 3-coin portfolio: DSR(N=4 family selection)=0.868, DSR(N=32 portfolio-level parameter×family)=0.751, both required to be ≥0.95)
 
-> 修订说明：原版 gate 只按族内试验数校正 DSR，低估了实际发生的选择（4 族×3 币×2 市场×成本口径×选参/集成切换），且认证对象与部署对象不一致（PBO 0.66–0.92 亦属强警告）。**认证未通过时，Phase 2 定位为探索性 paper 验证，不构成策略认证**；`family_gate` 列仅为族内弱口径，供筛选参考。
+> Revision note: the original gate corrected DSR only by the within-family trial count, which underestimated the selection that actually occurred (4 families × 3 coins × 2 markets × cost basis × select-param/ensemble switch), and the certification object did not match the deployment object (PBO 0.66–0.92 is also a strong warning). **When certification does not pass, Phase 2 is positioned as exploratory paper validation and does not constitute strategy certification**; the `family_gate` column is only a weak within-family basis for screening reference.
 
-### 研究候选（族内口径达标行）
+### Research candidates (rows qualifying on the within-family basis)
 
 | symbol | market | family | oos_sharpe | dsr | dsr_meta32 | pbo | ens_oos_sharpe | ens_oos_maxdd_pct | bh_oos_sharpe |
 |---|---|---|---|---|---|---|---|---|---|
@@ -18,7 +18,7 @@
 | ETHUSDT | spot | donchian | 0.89 | 0.96 | 0.724 | 0.71 | 0.88 | -42.8 | 0.57 |
 | SOLUSDT | spot | donchian | 1.02 | 0.976 | 0.661 | 0.92 | 0.74 | -44.1 | 0.62 |
 
-## 主结果（walk-forward 样本外，净成本）
+## Main results (walk-forward out-of-sample, net of costs)
 
 | symbol | market | family | cost | full_best_sharpe | oos_sharpe | oos_cagr_pct | oos_maxdd_pct | dsr | dsr_meta32 | pbo | ens_oos_sharpe | bh_oos_sharpe | family_gate |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -59,9 +59,9 @@
 | SOLUSDT | um | tsmom | um_taker6 | 0.97 | 0.48 | 6.0 | -21.7 | 0.451 | 0.252 | 0.19 | 0.11 | 0.76 | False |
 | SOLUSDT | um | tsmom | um_maker2 | 1.0 | 0.34 | 3.7 | -21.4 | 0.344 | 0.175 | 0.2 | 0.15 | 0.76 | False |
 
-## 跨币等权组合（现货 taker 成本；每族 = 参数集成 × 3 币等权）
+## Cross-coin equal-weight portfolio (spot taker cost; each family = parameter ensemble × 3 coins equal-weight)
 
-构造中唯一的自由度是**选哪一族**（N=4 试验；无选参、无选币），窗口为三币 OOS 交集。这是最接近实际部署形态的数字，也是 DSR 校正最少受选择污染的口径。
+The only degree of freedom in the construction is **which family to pick** (N=4 trials; no parameter selection, no coin selection); the window is the three-coin OOS intersection. This is the number closest to the actual deployment form, and the basis where the DSR correction is least contaminated by selection.
 
 | family | sharpe | cagr_pct | ann_vol_pct | max_dd_pct | n_bars | dsr_n4 | dsr_n32 |
 |---|---|---|---|---|---|---|---|
@@ -70,53 +70,53 @@
 | tsmom | 0.65 | 6.0 | 9.8 | -12.2 | 1414 | 0.824 | 0.69 |
 | rsi_meanrev | 0.35 | 6.3 | 30.7 | -38.1 | 1414 | 0.634 | 0.462 |
 
-## 资金费率 carry 模拟（delta 中性，1x，不属于预测类门槛）
+## Funding-rate carry simulation (delta neutral, 1x, not a prediction-class gate)
 
-> ⚠️ 本模拟只含资金费收入与出入场成本，**未建模**极端行情下的平仓滑点尖峰、基差瞬时走阔与保证金链条（BIS WP1087：carry 本质是崩盘风险补偿），表中 Sharpe 显著高估平稳性，实际应按'高个位数 APR + 罕见尾部事件'理解。
+> ⚠️ This simulation includes only funding income and entry/exit costs; it does **not** model close-out slippage spikes in extreme conditions, instantaneous basis blowouts, or the margin chain (BIS WP1087: carry is essentially compensation for crash risk). The Sharpe in the table substantially overstates stability; interpret the reality as "high-single-digit APR + rare tail events".
 
-### BTCUSDT（Binance 资金费 2020→今）
+### BTCUSDT (Binance funding 2020→now)
 
-| 变体 | 净APR% | Sharpe | MaxDD% | 在场时间 | 往返次数 | 期间平均资金费APR% |
+| variant | net APR% | Sharpe | MaxDD% | time in market | round trips | avg funding APR% over period |
 |---|---|---|---|---|---|---|
 | always_on | 5.95 | 10.56 | -0.74 | 100% | 0 | 11.92 |
 | filter_5/0 | 5.44 | 9.1 | -0.34 | 80% | 17 | 11.92 |
 | filter_10/2 | 4.79 | 7.99 | -0.38 | 53% | 15 | 11.92 |
 
-### ETHUSDT（Binance 资金费 2020→今）
+### ETHUSDT (Binance funding 2020→now)
 
-| 变体 | 净APR% | Sharpe | MaxDD% | 在场时间 | 往返次数 | 期间平均资金费APR% |
+| variant | net APR% | Sharpe | MaxDD% | time in market | round trips | avg funding APR% over period |
 |---|---|---|---|---|---|---|
 | always_on | 7.08 | 9.75 | -0.89 | 100% | 0 | 14.18 |
 | filter_5/0 | 6.56 | 8.75 | -0.89 | 80% | 19 | 14.18 |
 | filter_10/2 | 6.23 | 8.46 | -0.28 | 56% | 10 | 14.18 |
 
-### SOLUSDT（Binance 资金费 2020→今）
+### SOLUSDT (Binance funding 2020→now)
 
-| 变体 | 净APR% | Sharpe | MaxDD% | 在场时间 | 往返次数 | 期间平均资金费APR% |
+| variant | net APR% | Sharpe | MaxDD% | time in market | round trips | avg funding APR% over period |
 |---|---|---|---|---|---|---|
 | always_on | 0.02 | 0.01 | -19.87 | 100% | 0 | 0.08 |
 | filter_5/0 | 4.15 | 5.75 | -0.76 | 59% | 26 | 0.08 |
 | filter_10/2 | 4.09 | 5.85 | -0.81 | 43% | 17 | 0.08 |
 
-## 结论
+## Conclusions
 
-1. **两级判定**：研究候选通过（BTCUSDT, ETHUSDT, SOLUSDT 现货 donchian，族内 DSR 0.96–0.98）；**统计认证未通过**——部署组合 DSR(N=4)=0.868、DSR(N=32)=0.751，低于 0.95 门槛。
+1. **Two-tier verdict**: research candidate passes (BTCUSDT, ETHUSDT, SOLUSDT spot donchian, within-family DSR 0.96–0.98); **statistical certification does not pass** — the deployment portfolio DSR(N=4)=0.868, DSR(N=32)=0.751, below the 0.95 threshold.
 
-2. **证据强度的定性**：单市场 meta-DSR(32) 仅 0.57–0.72，PBO 0.66–0.92 属强警告（族内参数排名不稳定，集成只消除选参风险、不消除族级不确定性）。支撑点：三币方向一致、参数集成后稳健、与文献（JFQA 2025 CTREND）同向。定性为**未经认证的研究候选**：有真实但中等强度的证据，只配探索性模拟验证，不构成任何实盘部署依据。
+2. **Qualitative strength of evidence**: single-market meta-DSR(32) is only 0.57–0.72, and PBO 0.66–0.92 is a strong warning (within-family parameter rankings are unstable; the ensemble only removes parameter-selection risk, not family-level uncertainty). Supporting points: the three coins agree in direction, the parameter ensemble is robust, and it agrees with the literature (JFQA 2025 CTREND). Qualitatively an **uncertified research candidate**: real but moderate-strength evidence, worthy only of exploratory paper validation, not any basis for live deployment.
 
-3. **探索性 paper 验证对象（非认证策略）**：`donchian` 参数集成 × 3 币等权（现货长平）。组合期望特征（净成本、3.9 年 OOS 交集）：Sharpe ≈ 0.74, CAGR ≈ 19.6%, 年化波动 ≈ 30.5%, MaxDD ≈ -28.4%。tsmom 集成（低波动、MaxDD −12%）作为分散候选在模拟盘并行观察（该组合未预注册，只观察不部署）。
+3. **Exploratory paper validation object (not a certified strategy)**: `donchian` parameter ensemble × 3 coins equal-weight (spot long/flat). Expected portfolio characteristics (net of costs, 3.9-year OOS intersection): Sharpe ≈ 0.74, CAGR ≈ 19.6%, annualized vol ≈ 30.5%, MaxDD ≈ -28.4%. The tsmom ensemble (low vol, MaxDD −12%) is observed in parallel in the paper book as a diversification candidate (this portfolio is not pre-registered; observed only, not deployed).
 
-4. **执行市场选现货**：um 全面弱于 spot（资金费拖累 + 样本期差异），且换手极低使 maker/taker 敏感性可忽略——现货执行还天然消除杠杆与强平风险。
+4. **Execution market: spot**: um is uniformly weaker than spot (funding drag + sample-period differences), and turnover is so low that maker/taker sensitivity is negligible — spot execution also naturally eliminates leverage and liquidation risk.
 
-5. **carry**：BTC/ETH always-on 净 APR ~6–7%（对尾部风险打折后理解），SOL 平均资金费≈0，**必须**带阈值开关。carry 执行器按计划留在 Phase 3。
+5. **carry**: BTC/ETH always-on net APR ~6–7% (understood after discounting for tail risk); SOL average funding ≈ 0, so a threshold switch is **required**. The carry executor stays in Phase 3 as planned.
 
-6. **对照组行为正常**：RSI 均值回归在组合口径垫底（0.35）——流程对好坏策略有区分度，这是方法论自检通过的信号。
+6. **Control group behaves normally**: RSI mean-reversion is at the bottom on the portfolio basis (0.35) — the process discriminates between good and bad strategies, a sign that the methodology self-check passes.
 
-## 附录：各市场最优族的逐折记录
+## Appendix: fold-by-fold record of each market's best family
 
 ### BTCUSDT/spot/donchian
 
-| 折(OOS窗口) | 选中参数 | train SR/期 | OOS SR/期 |
+| fold (OOS window) | selected params | train SR/period | OOS SR/period |
 |---|---|---|---|
 | 2020-12-31→2021-06-30 | n_entry=40,n_exit=20 | 0.1346 | 0.0559 |
 | 2021-07-01→2021-12-29 | n_entry=40,n_exit=20 | 0.1026 | 0.0546 |
@@ -132,7 +132,7 @@
 
 ### BTCUSDT/um/donchian
 
-| 折(OOS窗口) | 选中参数 | train SR/期 | OOS SR/期 |
+| fold (OOS window) | selected params | train SR/period | OOS SR/period |
 |---|---|---|---|
 | 2021-12-31→2022-06-30 | n_entry=40,n_exit=20 | 0.079 | -0.0245 |
 | 2022-07-01→2022-12-29 | n_entry=100,n_exit=50 | 0.0794 | 0.0 |
@@ -146,7 +146,7 @@
 
 ### ETHUSDT/spot/donchian
 
-| 折(OOS窗口) | 选中参数 | train SR/期 | OOS SR/期 |
+| fold (OOS window) | selected params | train SR/period | OOS SR/period |
 |---|---|---|---|
 | 2020-12-31→2021-06-30 | n_entry=40,n_exit=20 | 0.0788 | 0.125 |
 | 2021-07-01→2021-12-29 | n_entry=20,n_exit=10 | 0.1071 | 0.0884 |
@@ -162,7 +162,7 @@
 
 ### ETHUSDT/um/rsi_meanrev
 
-| 折(OOS窗口) | 选中参数 | train SR/期 | OOS SR/期 |
+| fold (OOS window) | selected params | train SR/period | OOS SR/period |
 |---|---|---|---|
 | 2021-12-31→2022-06-30 | n=14,buy_below=25,exit_above=70 | 0.0867 | 0.0367 |
 | 2022-07-01→2022-12-29 | n=14,buy_below=25,exit_above=70 | 0.0184 | 0.1373 |
@@ -176,7 +176,7 @@
 
 ### SOLUSDT/spot/donchian
 
-| 折(OOS窗口) | 选中参数 | train SR/期 | OOS SR/期 |
+| fold (OOS window) | selected params | train SR/period | OOS SR/period |
 |---|---|---|---|
 | 2022-08-11→2023-02-08 | n_entry=40,n_exit=20 | 0.1357 | 0.0026 |
 | 2023-02-09→2023-08-09 | n_entry=55,n_exit=27 | 0.1073 | -0.0868 |
@@ -189,7 +189,7 @@
 
 ### SOLUSDT/um/tsmom
 
-| 折(OOS窗口) | 选中参数 | train SR/期 | OOS SR/期 |
+| fold (OOS window) | selected params | train SR/period | OOS SR/period |
 |---|---|---|---|
 | 2022-09-14→2023-03-14 | lookback=30,target_vol=0.1 | 0.109 | -0.0093 |
 | 2023-03-15→2023-09-12 | lookback=30,target_vol=0.1 | 0.0795 | 0.0708 |
@@ -199,4 +199,3 @@
 | 2025-03-12→2025-09-09 | lookback=30,target_vol=0.1 | 0.0639 | -0.0173 |
 | 2025-09-10→2026-03-10 | lookback=30,target_vol=0.15 | 0.0441 | -0.0545 |
 | 2026-03-11→2026-07-11 | (flat) | -0.0167 | 0.0 |
-

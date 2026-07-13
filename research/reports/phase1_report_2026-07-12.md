@@ -1,8 +1,5 @@
-# [已取代] Phase 1 研究报告 — 2026-07-12
+# [SUPERSEDED] Phase 1 Research Report — 2026-07-12
 
-本报告的门槛判定已被 2026-07-13 review 修订取代：原 gate 仅按族内试验数校正 DSR，
-低估了实际发生的多重选择，且认证对象与部署对象不一致。
+The gate verdict in this report has been superseded by the 2026-07-13 review revision: the original gate corrected DSR only by the within-family trial count, underestimating the multiple selection that actually occurred, and the certification object did not match the deployment object.
 
-**请以 `phase1_report_2026-07-13.md` 为准**（两级判定：研究候选 PASS；统计认证 FAIL —
-部署组合 DSR(N=4)=0.868 / DSR(N=32)=0.395 < 0.95）。原始数据表见
-`phase1_summary_2026-07-13.csv`；本文件保留仅为审计轨迹。
+**Refer to `phase1_report_2026-07-13.md` as authoritative** (two-tier verdict: research candidate PASS; statistical certification FAIL — deployment portfolio DSR(N=4)=0.868 / DSR(N=32)=0.395 < 0.95). The raw data table is in `phase1_summary_2026-07-13.csv`; this file is retained only as an audit trail.

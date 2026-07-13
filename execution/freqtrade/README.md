@@ -1,7 +1,7 @@
-# execution/freqtrade — Phase 2 占位
+# execution/freqtrade — Phase 2 placeholder
 
-方向性策略的执行层将放在这里（Freqtrade user_data、各交易所 config、策略适配器）。
+The execution layer for directional strategies will go here (Freqtrade user_data, per-exchange config, strategy adapters).
 
-按照调研报告（Crypto/auto-trading-system-research-2026-07-12.md）§6.6：
-只有当 research/ 中至少一个策略通过"净成本、walk-forward 样本外、DSR>0"门槛后，
-才进入本目录的搭建（dry-run → Bitget 合约 demo → 小额实盘）。
+Per §6.6 of the research report (Crypto/auto-trading-system-research-2026-07-12.md):
+work in this directory only begins (dry-run → Bitget futures demo → small live) once at least one
+strategy in research/ passes the "net of costs, walk-forward out-of-sample, DSR>0" gate.

@@ -1,128 +1,145 @@
 # QubitvaleTrading
 
-个人加密货币量化交易系统（现货 + USDT-M 永续），按 [调研报告](../../Documents/Claude/Projects/Crypto/auto-trading-system-research-2026-07-12.md) §6 的五层架构分阶段搭建。
+A personal crypto quantitative trading system (spot + USDT-M perpetuals), built in phases following the five-layer architecture in §6 of the [research report](../../Documents/Claude/Projects/Crypto/auto-trading-system-research-2026-07-12.md).
 
-**当前状态（2026-07-13 review 修订）**：Phase 1 = **研究候选通过、统计认证未通过**（部署组合 DSR(N=4)=0.868 / DSR(N=32)=0.395，均 <0.95，详见 `research/reports/phase1_report_2026-07-13.md`）。Phase 2 = **探索性 paper 验证已搭建**（起始 2026-07-12），**自动化尚未部署**——在 Mac 上运行 `bash scripts/setup_mac.sh` 完成部署后，6 周 gate 计时才正式起算。本仓库当前不构成任何实盘部署依据。
+**Current status (revised in the 2026-07-13 review)**: Phase 1 = **research candidate PASS, statistical certification FAIL** (deployment portfolio DSR(N=4)=0.868 / DSR(N=32)=0.395, both <0.95; see `research/reports/phase1_report_2026-07-13.md`). Phase 2 = **exploratory paper validation is set up** (started 2026-07-12), but **automation is not yet deployed** — the 6-week gate clock only officially starts once you run `bash scripts/setup_mac.sh` on the Mac to complete deployment. This repository currently does not constitute any basis for live deployment.
 
-> 免责声明：本仓库仅为个人研究工具，不构成投资建议。合约杠杆交易风险极高。
+> Disclaimer: This repository is purely a personal research tool and does not constitute investment advice. Leveraged futures trading carries extremely high risk.
 
-## Phase 0 已交付
+## Phase 0 delivered
 
-- **历史数据回填**（Binance Vision 官方免费批量数据）：BTC/ETH/SOL × 现货/USDT-M 合约 × 1h/4h/1d，2019-01 →（月度 zip + 当月日度 zip 补尾，T-1）；USDT-M 资金费率史
-- **Bitget 实时采集**（CCXT 公共端点）：行情/资金费/OI 快照、Bitget 资金费率史
-- **新闻采集**：RSS（CoinDesk / Cointelegraph / The Block / 吴说）+ GDELT DOC 2.0（免费）
-- **数据质检**：缺口/重复/OHLC 一致性 + 日线收盘 vs CoinGecko & Coinbase 跨源校验（门槛 <0.5%）+ Bitget 一致性
-- 单元测试（解析器与 QC 逻辑，离线可跑）
+- **Historical data backfill** (Binance Vision official free bulk data): BTC/ETH/SOL × spot/USDT-M futures × 1h/4h/1d, 2019-01 → present (monthly zips + current-month daily zips to fill the tail, T-1); USDT-M funding-rate history
+- **Bitget live collection** (CCXT public endpoints): market/funding/OI snapshots, Bitget funding-rate history
+- **News collection**: RSS (CoinDesk / Cointelegraph / The Block / Wu Blockchain) + GDELT DOC 2.0 (free)
+- **Data QC**: gaps/duplicates/OHLC consistency + daily close vs CoinGecko & Coinbase cross-source validation (threshold <0.5%) + Bitget consistency
+- Unit tests (parsers and QC logic, runnable offline)
 
-## 快速开始
+## Quick start
 
 ```bash
 pip install -r requirements.txt
 
-python -m scripts.backfill          # 全量/增量回填（重跑自动续传）
-python -m scripts.bitget_snapshot   # Bitget 快照 + 资金费史
-python -m scripts.collect_news      # RSS + GDELT 采一轮
-python -m scripts.run_qc            # 质检，门槛不过 exit 1
-python -m scripts.build_db          # 重建 DuckDB 视图（换机器后跑一次）
-python -m scripts.update_data       # 日常一键增量（数据+资金费+新闻）
-python -m scripts.run_phase1        # 复跑 Phase 1 研究套件（walk-forward + DSR/PBO + carry）
-python -m scripts.run_paper_daily   # ★ Phase 2 每日任务：数据→新闻打分→信号→paper 调仓→通知
-python -m scripts.paper_status      # 查看 paper 仓位/权益/信号/风险旗
-python -m scripts.paper_review      # 生成周度复盘（paper vs 模型回放 vs Phase1 期望带）
-pytest -q                           # 单元测试
+python -m scripts.backfill          # full/incremental backfill (auto-resumes on rerun)
+python -m scripts.bitget_snapshot   # Bitget snapshot + funding history
+python -m scripts.collect_news      # one round of RSS + GDELT collection
+python -m scripts.run_qc            # QC; exit 1 if a threshold fails
+python -m scripts.build_db          # rebuild DuckDB views (run once after switching machines)
+python -m scripts.update_data       # daily one-click incremental (data + funding + news)
+python -m scripts.run_phase1        # rerun the Phase 1 research suite (walk-forward + DSR/PBO + carry)
+python -m scripts.run_paper_daily   # ★ Phase 2 daily job: data → news scoring → signals → paper rebalance → notify
+python -m scripts.paper_status      # view paper positions/equity/signals/risk flags
+python -m scripts.paper_review      # generate the weekly review (paper vs model replay vs Phase 1 expected band)
+pytest -q                           # unit tests
 ```
 
-## Phase 2 模拟盘（运行中）
+## Phase 2 paper trading (running)
 
-**多账本（2026-07-13 起）**：每个策略一本独立虚拟账本（各 $10,000、独立成交/权益/
-runs 注册表/冻结基准，目录 `data/store/paper/<book>/`），共享数据、行情、风控与全局锁。
-账本清单在 `config/settings.yaml → paper.books`，策略在 `strategies/registry.py` 注册
-（统一接口 `compute_weights(dfs)`，信号代码一律与研究引擎共享、黄金测试锁死）：
+**Multi-book (since 2026-07-13)**: each strategy has its own independent virtual ledger (each
+$10,000, with independent fills/equity/runs registry/frozen baseline, under directory
+`data/store/paper/<book>/`), sharing data, market feeds, risk controls, and the global lock.
+The book list lives in `config/settings.yaml → paper.books`; strategies are registered in
+`strategies/registry.py` (unified interface `compute_weights(dfs)`; signal code is always shared
+with the research engine and locked down by golden tests):
 
-| 账本 | 形态 | Phase 1 组合口径参考 | 起始 |
+| Book | Form | Phase 1 portfolio-level reference | Started |
 |---|---|---|---|
-| donchian_ensemble | 4 参数集成 × 3 币，现货长平 | Sharpe 0.74 / MaxDD −28% / DSR(N=4) 0.868 | 2026-07-12 |
-| tsmom_ensemble | 12 参数集成 × 3 币，现货长平 + σ₂₀ vol targeting | Sharpe 0.65 / vol 9.8% / MaxDD −12% / DSR(N=4) 0.824 | 2026-07-13 |
+| donchian_ensemble | 4-parameter ensemble × 3 coins, spot long/flat | Sharpe 0.74 / MaxDD −28% / DSR(N=4) 0.868 | 2026-07-12 |
+| tsmom_ensemble | 12-parameter ensemble × 3 coins, spot long/flat + σ₂₀ vol targeting | Sharpe 0.65 / vol 9.8% / MaxDD −12% / DSR(N=4) 0.824 | 2026-07-13 |
 
-**Phase 3 选择纪律（ex-ante，写死在策略文件头）**：两本都达标 → 各半仓部署两个策略，
-**不做"选赢家"**（那会引入 N=2 的又一层选择偏差）；只有一本达标则只试点那一本。
-新增账本的流程与纪律见 `strategies/registry.py` 文件头——每加一本都在扩大多重检验空间。
+**Phase 3 selection discipline (ex-ante, hard-coded in the strategy file headers)**: if both books
+pass → deploy both strategies at half size each, **do NOT "pick the winner"** (that would introduce
+yet another layer of N=2 selection bias); if only one passes, pilot only that one.
+The process and discipline for adding new books are in the header of `strategies/registry.py` —
+every book added enlarges the multiple-testing space.
 
-**自动化部署（必做，Mac 终端一条命令）**：
+**Automated deployment (required, one command in the Mac terminal)**:
 
 ```
 bash scripts/setup_mac.sh
 ```
 
-脚本会建仓库内 `.venv`（不依赖系统 python 是否有 pandas）、安装 launchd 每日任务
-（本地 08:10；睡眠错过则唤醒后补跑）、**冻结期望带基准**（`scripts.freeze_baseline`，
-6 周 gate 的口径自此固定，不随数据更新漂移）并立即试跑一次。每日任务幂等可任意重跑，
-且整个运行持有**进程级独占锁**（重叠的手动/定时任务自动跳过，防丢失更新）：
-错过的天数以当日**开盘价 ±slip_floor** 补账（mode=catchup，并回放当日事件门与
-历史风险旗）；当日用 Bitget **bid/ask**（缺盘口则 last±slip_floor）成交（mode=live）。
-信号有效性按**逐资产**校验：任一币缺 D-1 决策 bar → 整日不调仓并记 P1（缺数据
-绝不会被当成清仓信号）。复盘的期望带用冻结 OOS 样本的 block bootstrap 经验分布，
-统计只取 settled 权益。
+The script creates an in-repo `.venv` (not dependent on whether the system Python has pandas),
+installs the launchd daily job (local 08:10; catches up after wake if a run was missed while
+asleep), **freezes the expected-band baseline** (`scripts.freeze_baseline`, so the 6-week gate's
+reference is fixed from here on and does not drift with data updates), and runs once immediately.
+The daily job is idempotent and can be rerun arbitrarily, and the entire run holds a
+**process-level exclusive lock** (overlapping manual/scheduled jobs auto-skip, preventing lost
+updates): missed days are back-filled at that day's **open price ±slip_floor** (mode=catchup,
+replaying that day's event gate and historical risk flags); the current day fills using Bitget
+**bid/ask** (or last±slip_floor if the book is missing) (mode=live). Signal validity is checked
+**per-asset**: if any coin lacks its D-1 decision bar → no rebalance for the whole day and a P1
+is logged (missing data is never treated as a liquidation signal). The review's expected band uses
+the block-bootstrap empirical distribution of the frozen OOS sample; statistics only use settled
+equity.
 
-**已知简化**（$10k 虚拟盘量级下影响可忽略，如实记录）：不模拟价格/数量步长取整与
-部分成交；catchup 日的历史风险旗仅在归档存在时回放（归档自 2026-07-13 启用）。
+**Known simplifications** (negligible at the $10k virtual-book scale, recorded faithfully): does not
+model price/quantity step-size rounding or partial fills; historical risk flags on catchup days are
+only replayed when the archive exists (archiving enabled since 2026-07-13).
 
-**风控规则**（只限制加仓，永不阻止减仓）：CPI/FOMC 等排期事件前 36h 至后 1h 禁开新仓
-（`config/calendar.yaml`，需人工核实维护）；新闻风险旗——资产特定负面 sev≥4 禁加仓、
-sev≥5 减半，市场级(ALL)旗需 sev≥5（打分器走 **OpenRouter** 接口调 DeepSeek：`.env` 配
-`OPENROUTER_API_KEY`，模型默认 `deepseek/deepseek-v4-flash` 可用 `OPENROUTER_MODEL` 覆盖；
-无 key 时关键词规则兜底）；**旗过期（TTL 24h）视为状态未知 → 保守禁加仓**；
-信号必须来自 D-1 决策 bar（Vision 未到用 Bitget 尾部 bar 补齐，仍缺则跳过交易并记
-P1 事故——绝不静默沿用旧信号）。运维事故持久化于 `data/store/ops/incidents.parquet`
-（P0-P3 分级，"零 P0"由此可审计）。**paper 状态以本机 `data/store/paper/` 为准**；
-换机器运行前先同步该目录（含 signals/、intel/、ops/）。账本为事件溯源设计：
-cash/持仓永远从 `trades.parquet` 重放重建，任意时点崩溃可恢复。
+**Risk-control rules** (only restrict adding to positions, never block reducing): no new positions
+from 36h before to 1h after scheduled events like CPI/FOMC (`config/calendar.yaml`, requires manual
+verification and upkeep); news risk flags — asset-specific negative sev≥4 blocks adds, sev≥5 halves,
+market-level (ALL) flags require sev≥5 (the scorer calls DeepSeek via the **OpenRouter** interface:
+set `OPENROUTER_API_KEY` in `.env`, model defaults to `deepseek/deepseek-v4-flash`, overridable with
+`OPENROUTER_MODEL`; falls back to keyword rules when no key is set); **an expired flag (TTL 24h) is
+treated as unknown state → conservatively block adds**; signals must come from the D-1 decision bar
+(if Vision hasn't arrived, fill with the Bitget tail bar; if still missing, skip trading and log a
+P1 incident — never silently reuse an old signal). Operational incidents are persisted to
+`data/store/ops/incidents.parquet` (graded P0-P3, so "zero P0" is auditable). **The authoritative
+paper state is the local `data/store/paper/`**; sync that directory (including signals/, intel/, ops/)
+before running on another machine. The ledger is event-sourced by design: cash/positions are always
+replayed and rebuilt from `trades.parquet`, so it can recover from a crash at any point in time.
 
-**Phase 2 放行门槛**：自动化稳定运行起连续 ≥6 周，paper 累计收益落在期望分布 95%
-带内、跟踪误差(年化) < 2%、零 P0 事故（`paper_review` 自动核算）。因 Phase 1 统计
-认证未通过，6 周达标也只支持『极小额、可全损』级别的 Phase 3 试点。
+**Phase 2 pass gate**: from stable automated operation onward, ≥6 consecutive weeks with paper
+cumulative return inside the 95% expected-distribution band, tracking error (annualized) < 2%, and
+zero P0 incidents (`paper_review` computes this automatically). Because Phase 1 statistical
+certification did NOT pass, even meeting the 6-week gate only supports a Phase 3 pilot at the
+"tiny amount, fully losable" level.
 
-所有命令在**仓库根目录**运行。配置见 `config/settings.yaml`；密钥复制 `.env.example` 为 `.env`（Phase 0 无需任何密钥）。
+Run all commands from the **repository root**. Configuration is in `config/settings.yaml`; for
+secrets, copy `.env.example` to `.env` (Phase 0 needs no keys at all).
 
-## 数据存储
+## Data storage
 
-`data/store/`（不进 git，可随时重建）：
+`data/store/` (not in git, rebuildable at any time):
 
 ```
-market/{spot|um}/{SYMBOL}/{1h|4h|1d}.parquet   K 线（symbol/market/timeframe 已内嵌列）
-funding_um/{SYMBOL}.parquet                    Binance USDT-M 资金费率史
-funding_bitget/{SYMBOL}_PERP.parquet           Bitget 资金费率史（≈166 天滚动）
-news/rss.parquet · news/gdelt.parquet          新闻（按 link/url 去重，append-only）
-live/latest.json                               最近一次 Bitget 快照
-manifest.json                                  回填进度（增量续传）
-quant.duckdb                                   视图层（build_db 重建）
+market/{spot|um}/{SYMBOL}/{1h|4h|1d}.parquet   K-lines (symbol/market/timeframe embedded as columns)
+funding_um/{SYMBOL}.parquet                    Binance USDT-M funding-rate history
+funding_bitget/{SYMBOL}_PERP.parquet           Bitget funding-rate history (≈166-day rolling)
+news/rss.parquet · news/gdelt.parquet          news (deduped by link/url, append-only)
+live/latest.json                               most recent Bitget snapshot
+manifest.json                                  backfill progress (incremental resume)
+quant.duckdb                                   view layer (rebuilt by build_db)
 ```
 
-用 DuckDB 查询示例：
+Example DuckDB query:
 
 ```sql
 SELECT market, symbol, timeframe, count(*) rows, min(ts) first, max(ts) last
 FROM klines GROUP BY 1,2,3 ORDER BY 1,2,3;
 ```
 
-## 设计注记
+## Design notes
 
-- **时间戳单位自适应**：Binance Vision 现货 K 线 2025-01 起从毫秒改为微秒，`normalize_epoch_series` 按量级自动识别（s/ms/us/ns），有单测覆盖。
-- **地理屏蔽降级**：本项目的云端会话中 `api.binance.com` 返回 451（地理屏蔽），因此增量尾部完全依赖 Vision 日度文件（T+1），**实时价格一律走 Bitget**。在你自己的网络或东京 VPS 上不受影响，架构不变。
-- **上市前 404**：SOL 现货 2020-08、SOL 合约 2020-09 才有数据，回填器把上市前月份记入 manifest 跳过，不视为缺口。
-- **QC 跨源对齐**：CoinGecko 日频点是 D 日 00:00 UTC 快照 ≈ 我们 D-1 日收盘；Coinbase 日桶收盘与我们同日对齐。USD vs USDT 计价差异通常 <0.1%，门槛 0.5% 已包含此项。
+- **Adaptive timestamp units**: Binance Vision spot K-lines switched from milliseconds to microseconds starting 2025-01; `normalize_epoch_series` auto-detects the unit by magnitude (s/ms/us/ns), covered by unit tests.
+- **Geo-block degradation**: in this project's cloud sessions, `api.binance.com` returns 451 (geo-blocked), so the incremental tail relies entirely on Vision daily files (T+1), and **real-time prices always go through Bitget**. On your own network or a Tokyo VPS this is not an issue and the architecture is unchanged.
+- **Pre-listing 404**: SOL spot only has data from 2020-08 and SOL futures from 2020-09; the backfiller records pre-listing months in the manifest as skipped and does not treat them as gaps.
+- **QC cross-source alignment**: the CoinGecko daily point is the D-day 00:00 UTC snapshot ≈ our D-1 daily close; the Coinbase daily-bucket close aligns with our same-day close. USD vs USDT pricing differences are usually <0.1%; the 0.5% threshold already accounts for this.
 
-## 路线图（详见调研报告 §6.6）
+## Roadmap (see §6.6 of the research report for details)
 
-| Phase | 内容 | 放行门槛 | 状态 |
+| Phase | Content | Pass gate | Status |
 |---|---|---|---|
-| 0 | 数据地基 + 仓库骨架 | QC 全过、跨源 <0.5% | ✅ 2026-07-12 |
-| 1 | 研究平台（成本模型、walk-forward、DSR/PBO）+ 基线策略（趋势/TSMOM/carry 模拟） | 部署对象 DSR(N=4)与(N=32) 均≥0.95 | ⚠️ 研究候选 PASS / **统计认证 FAIL**（0.868 / 0.395） |
-| 2 | 探索性模拟盘（自研 paper 引擎¹ + 多账本：donchian + tsmom + 事件门/新闻旗） | 每本账自动化后连续 ≥6 周达标 | 🟡 已搭建；自动化待 `setup_mac.sh` |
-| 3 | 小额实盘（硬风控、无提现权限 key、杀开关） | 4–8 周与模拟一致 | ⬜ |
-| 4 | 多所扩展 / 事件驱动 / 月度校准 | 持续 | ⬜ |
+| 0 | Data foundation + repo skeleton | All QC passes, cross-source <0.5% | ✅ 2026-07-12 |
+| 1 | Research platform (cost model, walk-forward, DSR/PBO) + baseline strategies (trend/TSMOM/carry simulation) | Deployment target DSR(N=4) and (N=32) both ≥0.95 | ⚠️ Research candidate PASS / **statistical certification FAIL** (0.868 / 0.395) |
+| 2 | Exploratory paper trading (in-house paper engine¹ + multi-book: donchian + tsmom + event gate/news flags) | Each book ≥6 consecutive weeks meeting the gate after automation | 🟡 Set up; automation pending `setup_mac.sh` |
+| 3 | Small live trading (hard risk controls, no-withdrawal-permission key, kill switch) | 4–8 weeks consistent with paper | ⬜ |
+| 4 | Multi-exchange expansion / event-driven / monthly recalibration | Ongoing | ⬜ |
 
-¹ 计划原写 freqtrade dry-run；改为自研 paper 引擎的理由：模拟盘的目的是测量
-"信号→执行"相对回测的漂移，必须与研究引擎语义逐 bar 一致（同一份信号代码、同一套
-成本假设），framework 自带的成交模型会把框架差异混进跟踪误差。freqtrade 仍是
-Phase 3 实盘执行层的候选（届时对比自研 CCXT 执行器与 freqtrade 的取舍）。
+¹ The plan originally called for freqtrade dry-run; the reason for switching to an in-house paper
+engine: the purpose of paper trading is to measure the "signal → execution" drift relative to the
+backtest, which requires bar-by-bar semantic identity with the research engine (the same signal code,
+the same cost assumptions); a framework's built-in fill model would mix framework differences into the
+tracking error. freqtrade remains a candidate for the Phase 3 live execution layer (at which point
+we'll compare the trade-offs between the in-house CCXT executor and freqtrade).

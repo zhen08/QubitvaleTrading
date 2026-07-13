@@ -1,25 +1,24 @@
-# Paper 复盘（多账本）— 2026-07-13
+# Paper Review (multi-book) — 2026-07-13
 
-运维事故（自 2026-07-12）：P0=0 P1=0 P2=0 P3=0（明细 data/store/ops/incidents.parquet）；P0 门槛：✅ 0
+Operational incidents (since 2026-07-12): P0=0 P1=0 P2=0 P3=0 (details in data/store/ops/incidents.parquet); P0 gate: ✅ 0
 
-> 两本账均为**未经统计认证的研究候选**（Phase 1 修订判定），属探索性验证；Phase 3 选择纪律（ex-ante）：两本都达标 → 各半仓部署，不选赢家。
+> Both books are **uncertified research candidates** (Phase 1 revised verdict), so this is exploratory validation; Phase 3 selection discipline (ex-ante): if both books pass → deploy each at half size, do not pick a winner.
 
-## 账本：donchian_ensemble（起始 2026-07-12，$10,000）
+## Book: donchian_ensemble (started 2026-07-12, $10,000)
 
-窗口：1 个已结算日（≈0.1/6 周）；带基准：冻结基准（2026-07-13，1431 日）bootstrap
+Window: 1 settled day (≈0.1/6 weeks); band baseline: frozen baseline (2026-07-13, 1431 days) bootstrap
 
-| 指标 | Paper | 模型回放 | 备注 |
+| Metric | Paper | Model replay | Note |
 |---|---|---|---|
-| 累计收益 | -0.05% | 0.08% | 差 -13 bps |
-| 年化 Sharpe | 0.00 | 0.00 | |
-| TE | 样本不足 | — | |
-| 期望带 80%/95% | -1.33%~1.47% | ±(-3.11%~3.80%) | 带内 ✅ |
-| 成交/费用 | live 1 / catchup 0 | $0.83 | |
-| 持仓 | {'ETHUSDT': 0.4588258829} | 现金 $9,165.83 | |
+| Cumulative return | -0.05% | 0.08% | diff -13 bps |
+| Annualized Sharpe | 0.00 | 0.00 | |
+| TE | insufficient sample | — | |
+| Expected band 80%/95% | -1.33%~1.47% | ±(-3.11%~3.80%) | in band ✅ |
+| Fills/fees | live 1 / catchup 0 | $0.83 | |
+| Positions | {'ETHUSDT': 0.4588258829} | cash $9,165.83 | |
 
 - 2026-07-12 buy ETHUSDT 0.458826 @ 1816.23 [live]
 
-## 账本：tsmom_ensemble（起始 2026-07-13，$10,000）
+## Book: tsmom_ensemble (started 2026-07-13, $10,000)
 
-尚无已结算权益记录，暂无统计。
-
+No settled equity records yet, so no statistics available.

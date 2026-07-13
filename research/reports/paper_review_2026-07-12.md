@@ -1,3 +1,3 @@
-# Paper 复盘 — 2026-07-12
+# Paper Review — 2026-07-12
 
-已运行 1 天（起始 2026-07-12），样本不足两日，暂无对比统计。
+Running for 1 day (started 2026-07-12); fewer than two days of samples, so no comparative statistics yet.
