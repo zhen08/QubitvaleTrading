@@ -27,7 +27,6 @@ from data.collectors.common import http_session, load_env
 log = logging.getLogger("qvt.etf")
 
 TRACKED = ("BTC", "ETH", "SOL")
-_BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0")
 
 # ---- CoinGlass (primary) ----
 CG_BASE = "https://open-api-v4.coinglass.com/api/etf/{path}/flow-history"
@@ -109,31 +108,27 @@ def _num(s: str) -> float | None:
 
 
 def parse_farside(html: str, asset: str, fetched_at: str = "") -> list[dict]:
-    """Parse a Farside ETF-flow page: pull (Date, Total) from the flow table.
+    """Parse a Farside ETF-flow page.
 
-    Robust to changing per-ticker columns — it locates the header row containing
-    both 'Date' and 'Total' and reads only those two. Summary rows (Total/Average/
-    Maximum/Minimum) have a non-date first cell and are skipped by the date parse.
+    Farside's layout: the Date column header is blank and 'Total' is the last
+    column (also blank-labeled in the header — 'Total' only appears as a bottom
+    summary-row label). So we don't rely on headers at all: a data row is any row
+    whose first cell parses as a '%d %b %Y' date; its net flow is the last
+    non-empty cell (the Total column). This auto-skips the header, the 'Fee' row,
+    and the Total/Average/Maximum/Minimum summary rows (non-date first cell).
+    Values are US$m with '(x)' negatives, ',' thousands, and '0.0'/'-' zeros.
     """
     p = _TableRows()
     p.feed(html)
-    header_i = None
-    for i, r in enumerate(p.rows):
-        low = [c.strip().lower() for c in r]
-        if "date" in low and "total" in low:
-            header_i, header = i, low
-            break
-    if header_i is None:
-        return []
-    di, ti = header.index("date"), header.index("total")
     out: list[dict] = []
-    for r in p.rows[header_i + 1:]:
-        if len(r) <= max(di, ti):
+    for r in p.rows:
+        if len(r) < 2:
             continue
-        d = pd.to_datetime(r[di].strip(), format="%d %b %Y", errors="coerce", utc=True)
+        d = pd.to_datetime(r[0].strip(), format="%d %b %Y", errors="coerce", utc=True)
         if pd.isna(d):
             continue
-        v = _num(r[ti])
+        total_cell = next((c for c in reversed(r) if c.strip() != ""), "")
+        v = _num(total_cell)
         if v is None:
             continue
         out.append({"asset": asset, "date": d.normalize(), "net_flow_usd_m": round(v, 3),
@@ -141,7 +136,21 @@ def parse_farside(html: str, asset: str, fetched_at: str = "") -> list[dict]:
     return out
 
 
-def _collect_farside(session, assets: tuple[str, ...]) -> list[dict]:
+def _farside_get(url: str) -> str:
+    """Fetch a Farside page past Cloudflare's passive TLS fingerprinting.
+
+    Farside passes real browsers with NO cf_clearance cookie, i.e. it gates on the
+    client's TLS/HTTP2 fingerprint, not a JS challenge. Plain requests has a Python
+    fingerprint that 403s; curl_cffi impersonating Firefox matches the browser
+    fingerprint and passes. No browser, cookies, or API key needed.
+    """
+    from curl_cffi import requests as cr   # optional dep; import lazily so the module loads without it
+    r = cr.get(url, impersonate="firefox", timeout=30)
+    r.raise_for_status()
+    return r.text
+
+
+def _collect_farside(assets: tuple[str, ...]) -> list[dict]:
     fetched_at = str(pd.Timestamp.now(tz="UTC"))
     rows: list[dict] = []
     for asset in assets:
@@ -149,14 +158,9 @@ def _collect_farside(session, assets: tuple[str, ...]) -> list[dict]:
         if not url:
             continue
         try:
-            r = session.get(url, headers={"User-Agent": _BROWSER_UA,
-                                          "Accept": "text/html,application/xhtml+xml"},
-                            timeout=30)
-            r.raise_for_status()
-            got = parse_farside(r.text, asset, fetched_at)
-        except Exception as exc:  # noqa: BLE001 — Cloudflare 403 / layout change is non-fatal
-            log.warning("farside %s failed (non-fatal, often Cloudflare 403 on server IPs): %s",
-                        asset, exc)
+            got = parse_farside(_farside_get(url), asset, fetched_at)
+        except Exception as exc:  # noqa: BLE001 — Cloudflare/layout/missing-dep is non-fatal
+            log.warning("farside %s failed (non-fatal): %s", asset, exc)
             continue
         rows.extend(got)
         log.info("farside %s: %d rows", asset, len(got))
@@ -178,7 +182,7 @@ def collect(settings: dict) -> int:
     covered = {r["asset"] for r in rows}
     missing = tuple(a for a in TRACKED if a not in covered)
     if missing:
-        rows += _collect_farside(session, missing)      # Farside supplies SOL and any CG gaps
+        rows += _collect_farside(missing)               # Farside supplies SOL and any CG gaps
 
     if not rows:
         log.info("etf_flows: no data from any source (gate stays idle)")

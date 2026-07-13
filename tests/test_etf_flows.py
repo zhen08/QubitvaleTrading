@@ -111,15 +111,19 @@ def test_num_parsing():
     assert _num("abc") is None
 
 
+# Mirrors real Farside layout: blank Date header, per-ticker columns, blank-labeled
+# Total as the LAST column, a 'Fee' row, and Total/Average/Maximum/Minimum summary rows.
 FARSIDE_HTML = """
 <html><body>
 <table>
-<tr><th>Date</th><th>IBIT</th><th>FBTC</th><th>GBTC</th><th>Total</th></tr>
+<tr><td></td><td>IBIT</td><td>FBTC</td><td>GBTC</td><td></td></tr>
+<tr><td>Fee</td><td>0.25%</td><td>0.25%</td><td>1.50%</td><td></td></tr>
 <tr><td>05 Jan 2025</td><td>100.0</td><td>50.0</td><td>(30.0)</td><td>120.0</td></tr>
 <tr><td>06 Jan 2025</td><td>-</td><td>1,234.5</td><td>(1,000.0)</td><td>234.5</td></tr>
 <tr><td>07 Jan 2025</td><td>10</td><td>10</td><td>10</td><td>(45.6)</td></tr>
 <tr><td>Total</td><td>110</td><td>1294.5</td><td>(1020)</td><td>308.9</td></tr>
 <tr><td>Average</td><td>36.7</td><td>431.5</td><td>(340)</td><td>103.0</td></tr>
+<tr><td>Minimum</td><td>0</td><td>10</td><td>(1000)</td><td>(45.6)</td></tr>
 </table>
 </body></html>
 """
@@ -127,9 +131,9 @@ FARSIDE_HTML = """
 
 def test_parse_farside_table():
     rows = parse_farside(FARSIDE_HTML, "BTC", fetched_at="t")
-    # 3 data rows; Total/Average summary rows skipped (non-date first cell)
+    # 3 data rows; blank header, Fee, and Total/Average/Minimum summary rows all skipped
     assert [r["date"].strftime("%Y-%m-%d") for r in rows] == ["2025-01-05", "2025-01-06", "2025-01-07"]
-    assert [r["net_flow_usd_m"] for r in rows] == [120.0, 234.5, -45.6]
+    assert [r["net_flow_usd_m"] for r in rows] == [120.0, 234.5, -45.6]   # Total column (last cell)
     assert all(r["asset"] == "BTC" and r["source"] == "farside" for r in rows)
 
 

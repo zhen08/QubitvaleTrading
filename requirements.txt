@@ -7,3 +7,7 @@ duckdb>=1.0
 requests>=2.31
 PyYAML>=6.0
 pytest>=8.0
+# ETF-flow fallback: Farside gates on TLS fingerprint (not a JS challenge), so we
+# fetch it via curl_cffi impersonating Firefox. Optional at runtime — the collector
+# imports it lazily and degrades gracefully if absent.
+curl_cffi>=0.7
