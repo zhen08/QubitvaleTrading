@@ -101,6 +101,51 @@ def test_halve_cuts_position(tmp_path):
     assert abs(adj["ETHUSDT"] - 0.1) < 1e-9 and any("halve ETHUSDT" in n for n in notes)
 
 
+# ---- cold-start seed: event gate bypassed once (news/ETF/stale still apply) ----
+# Inside the CPI (config/calendar.yaml 2026-07-14 12:30Z) 36h-lookahead window.
+IN_EVENT = pd.Timestamp("2026-07-14T00:10:00Z")
+
+
+def test_cold_start_seeds_through_event_gate(tmp_path):
+    """A book that has never held a position may open its initial target even
+    inside a scheduled-event window (the launch-near-CPI calendar accident)."""
+    s = _settings(tmp_path)
+    benign = {"asset_neg_severity": {}, "market_neg_severity": 0}
+    adj, notes = _apply_risk_rules({"ETHUSDT": 0.083}, {}, s, IN_EVENT, benign, False,
+                                   cold_start=True)
+    assert abs(adj["ETHUSDT"] - 0.083) < 1e-9
+    assert any("cold-start seed" in n for n in notes)
+
+
+def test_event_gate_blocks_when_not_cold_start(tmp_path):
+    """Same window, but a book that has already traded gets the normal add clamp."""
+    s = _settings(tmp_path)
+    benign = {"asset_neg_severity": {}, "market_neg_severity": 0}
+    adj, notes = _apply_risk_rules({"ETHUSDT": 0.083}, {"ETHUSDT": 0.0}, s, IN_EVENT, benign,
+                                   False, cold_start=False)
+    assert adj["ETHUSDT"] == 0.0 and any("no new entries" in n for n in notes)
+
+
+def test_cold_start_still_respects_severe_news(tmp_path):
+    """cold_start bypasses ONLY the event gate; a live sev>=5 news flag still blocks."""
+    s = _settings(tmp_path)
+    severe = {"asset_neg_severity": {"ETH": 5}, "market_neg_severity": 0}
+    adj, notes = _apply_risk_rules({"ETHUSDT": 0.083}, {}, s, IN_EVENT, severe, False,
+                                   cold_start=True)
+    assert adj["ETHUSDT"] == 0.0                                  # news halve of a 0 floor
+    assert any("cold-start seed" in n for n in notes)            # event gate was bypassed
+    assert any("halve ETHUSDT" in n for n in notes)              # but news still fired
+
+
+def test_cold_start_still_blocked_by_stale_flags(tmp_path):
+    """Unknown/stale flags remain a conservative full block, even on cold start."""
+    s = _settings(tmp_path)
+    benign = {"asset_neg_severity": {}, "market_neg_severity": 0}
+    adj, notes = _apply_risk_rules({"ETHUSDT": 0.083}, {}, s, IN_EVENT, benign,
+                                   flags_unknown=True, cold_start=True)
+    assert adj["ETHUSDT"] == 0.0 and any("unknown/stale" in n for n in notes)
+
+
 # ---- Farside HTML fallback parser ----
 
 def test_num_parsing():

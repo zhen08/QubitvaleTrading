@@ -117,17 +117,26 @@ def _bitget_tail_fill(dfs: dict[str, pd.DataFrame], need_through: pd.Timestamp) 
 
 def _apply_risk_rules(targets: dict[str, float], current_w: dict[str, float],
                       settings: dict, now: pd.Timestamp, flags: dict | None,
-                      flags_unknown: bool) -> tuple[dict, list[str]]:
-    """事件门 + 新闻旗（只限制加仓，永不阻止减仓）。flags_unknown → 保守禁加仓。"""
+                      flags_unknown: bool, *, cold_start: bool = False) -> tuple[dict, list[str]]:
+    """事件门 + 新闻旗（只限制加仓，永不阻止减仓）。flags_unknown → 保守禁加仓。
+
+    cold_start：本账本从未持过仓（首次建仓）。此时**仅**豁免排期事件门——一本恰好
+    在 CPI/FOMC 窗口内启用的新账本不应因这一日历巧合而永远无法建立初始基线仓位
+    （事件门本意是"别在事件前追加风险"，而非阻止新账本诞生）。新闻旗/ETF/过期旗
+    反映的是当下真实风险状态，即使 cold-start 也照常生效（用户抉择：只豁免事件门）。
+    """
     notes: list[str] = []
     cfg = settings.get("intel", {})
     adj = dict(targets)
 
     blocked, why = entries_blocked(now, settings)
     if blocked:
-        for s in adj:
-            adj[s] = min(adj[s], current_w.get(s, 0.0))
-        notes.append(f"event_gate: no new entries ({why})")
+        if cold_start:
+            notes.append(f"event_gate bypassed for cold-start seed ({why})")
+        else:
+            for s in adj:
+                adj[s] = min(adj[s], current_w.get(s, 0.0))
+            notes.append(f"event_gate: no new entries ({why})")
 
     # ETF-flow gate (BTC/ETH only; SOL has no US spot ETF): sustained net outflows
     # restrict adds. Applied before the news early-return so a 'halve' still fires
@@ -236,7 +245,8 @@ def _run_book(book: str, bcfg: dict, weights: pd.DataFrame,
                          "sell": b["open"] * (1 - slip)} for s, b in bars.items()}
                 cur_w = led.weights({s: v["mark"] for s, v in q.items()})
                 targets, notes = _apply_risk_rules(targets, cur_w, settings, asof,
-                                                   hist_flags, flags_unknown=False)
+                                                   hist_flags, flags_unknown=False,
+                                                   cold_start=led.trades_df().empty)
                 if hist_flags is None:
                     notes.append("flags history unavailable (gate-only replay)")
                 bs["notes"] += [f"{dstr}: {n}" for n in notes]
@@ -267,7 +277,8 @@ def _run_book(book: str, bcfg: dict, weights: pd.DataFrame,
                 incident("P2", f"{book}:risk_flags_stale",
                          f"age={flags.get('age_hours')}h > TTL, no adds", dstr)
             targets, notes = _apply_risk_rules(targets, cur_w, settings, now, flags,
-                                               flags_unknown=bool(flags.get("stale")))
+                                               flags_unknown=bool(flags.get("stale")),
+                                               cold_start=led.trades_df().empty)
             bs["notes"] += notes
             trades = _rebalance(led, targets, quotes, day=dstr, ts=now, mode="live",
                                 reason="daily rebalance", settings=settings)
