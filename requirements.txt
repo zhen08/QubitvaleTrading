@@ -11,3 +11,9 @@ pytest>=8.0
 # fetch it via curl_cffi impersonating Firefox. Optional at runtime — the collector
 # imports it lazily and degrades gracefully if absent.
 curl_cffi>=0.7
+# ---- Cross-asset DL research program (plan §14) ----
+# torch: CPU build is sufficient (install with --index-url https://download.pytorch.org/whl/cpu)
+torch>=2.6
+scikit-learn>=1.5
+statsmodels>=0.14
+exchange_calendars>=4.5
