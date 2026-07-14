@@ -1,6 +1,7 @@
 """账本一：donchian 4 参数集成 × 3 币等权（现货长平）。
 
-Phase 1 修订判定：研究候选 PASS / 统计认证 FAIL（组合 DSR(N=4)=0.868、DSR(N=32)=0.751）
+Phase 1 修订判定：研究候选 PASS / 统计认证 FAIL（组合 DSR(N=4)=0.868、DSR(N=32)=0.750，
+对账记录见 research/reports/dsr_reconciliation_2026-07-14.md）
 ——本账本属**探索性 paper 验证**。信号逻辑复用 research.strategies.donchian
 （研究与生产同一份代码，tests/test_signals_consistency.py 黄金测试锁死）。
 

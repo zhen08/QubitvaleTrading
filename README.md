@@ -2,7 +2,7 @@
 
 A personal crypto quantitative trading system (spot + USDT-M perpetuals), built in phases following the five-layer architecture in §6 of the [research report](../../Documents/Claude/Projects/Crypto/auto-trading-system-research-2026-07-12.md).
 
-**Current status (revised in the 2026-07-13 review)**: Phase 1 = **research candidate PASS, statistical certification FAIL** (deployment portfolio DSR(N=4)=0.868 / DSR(N=32)=0.395, both <0.95; see `research/reports/phase1_report_2026-07-13.md`). Phase 2 = **exploratory paper validation is set up** (started 2026-07-12), but **automation is not yet deployed** — the 6-week gate clock only officially starts once you run `bash scripts/setup_mac.sh` on the Mac to complete deployment. This repository currently does not constitute any basis for live deployment.
+**Current status (revised in the 2026-07-13 review)**: Phase 1 = **research candidate PASS, statistical certification FAIL** (deployment portfolio DSR(N=4)=0.868 / DSR(N=32)=0.750, both <0.95; see `research/reports/phase1_report_2026-07-13.md`; an earlier 0.395 figure circulated in this README was a stale pre-fix value — see `research/reports/dsr_reconciliation_2026-07-14.md`). Phase 2 = **exploratory paper validation is set up** (started 2026-07-12), but **automation is not yet deployed** — the 6-week gate clock only officially starts once you run `bash scripts/setup_mac.sh` on the Mac to complete deployment. This repository currently does not constitute any basis for live deployment.
 
 > Disclaimer: This repository is purely a personal research tool and does not constitute investment advice. Leveraged futures trading carries extremely high risk.
 
@@ -132,7 +132,7 @@ FROM klines GROUP BY 1,2,3 ORDER BY 1,2,3;
 | Phase | Content | Pass gate | Status |
 |---|---|---|---|
 | 0 | Data foundation + repo skeleton | All QC passes, cross-source <0.5% | ✅ 2026-07-12 |
-| 1 | Research platform (cost model, walk-forward, DSR/PBO) + baseline strategies (trend/TSMOM/carry simulation) | Deployment target DSR(N=4) and (N=32) both ≥0.95 | ⚠️ Research candidate PASS / **statistical certification FAIL** (0.868 / 0.395) |
+| 1 | Research platform (cost model, walk-forward, DSR/PBO) + baseline strategies (trend/TSMOM/carry simulation) | Deployment target DSR(N=4) and (N=32) both ≥0.95 | ⚠️ Research candidate PASS / **statistical certification FAIL** (0.868 / 0.750) |
 | 2 | Exploratory paper trading (in-house paper engine¹ + multi-book: donchian + tsmom + event gate/news flags) | Each book ≥6 consecutive weeks meeting the gate after automation | 🟡 Set up; automation pending `setup_mac.sh` |
 | 3 | Small live trading (hard risk controls, no-withdrawal-permission key, kill switch) | 4–8 weeks consistent with paper | ⬜ |
 | 4 | Multi-exchange expansion / event-driven / monthly recalibration | Ongoing | ⬜ |
