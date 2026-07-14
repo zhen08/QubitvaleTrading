@@ -26,6 +26,9 @@ python -m scripts.run_qc            # QC; exit 1 if a threshold fails
 python -m scripts.build_db          # rebuild DuckDB views (run once after switching machines)
 python -m scripts.update_data       # daily one-click incremental (data + funding + news)
 python -m scripts.run_phase1        # rerun the Phase 1 research suite (walk-forward + DSR/PBO + carry)
+python -m scripts.backfill_cross_asset  # SPY/QQQ/GLD/VIX daily history (DL research plan §5)
+python -m scripts.update_cross_asset    # cross-asset incremental + QC + freshness status (exit 1 = fail-closed)
+python -m scripts.run_dl_research       # cross-asset DL suite: B1-B3 + E1-E4 walk-forward + gate report
 python -m scripts.run_paper_daily   # ★ Phase 2 daily job: data → news scoring → signals → paper rebalance → notify
 python -m scripts.paper_status      # view paper positions/equity/signals/risk flags
 python -m scripts.paper_review      # generate the weekly review (paper vs model replay vs Phase 1 expected band)
@@ -98,6 +101,19 @@ certification did NOT pass, even meeting the 6-week gate only supports a Phase 3
 
 Run all commands from the **repository root**. Configuration is in `config/settings.yaml`; for
 secrets, copy `.env.example` to `.env` (Phase 0 needs no keys at all).
+
+## Cross-asset DL research program (plan: `research/deep_learning_cross_asset_implementation_plan.md`)
+
+Stage 0-3 are implemented (2026-07-14): cross-asset daily store (SPY/QQQ/GLD via Yahoo chart
+API + curl_cffi, VIX via the official Cboe CSV; FRED as QC second source; `available_at`
+floored at 21:30 UTC), deterministic feature table (`features/cross_asset.py`, schema
+`xa-dl-v1`), and the research suite (`research/dl/`): a fixed causal TCN vs deterministic
+baselines B1 (σ20), B2 (HAR-RV), B3 (VIX threshold), all through the identical continuous
+risk-multiplier mapping, evaluated by embargoed expanding walk-forward with Ledoit-Wolf
+paired tests, DSR(N=7)/PBO, regime slices, and a 2x-cost stress case. Reports land in
+`research/reports/dl_cross_asset_<date>.md`. `strategies/donchian_tcn_risk_overlay.py`
+is **not registered** as a paper book and must stay unregistered until the plan's §11.1
+gate passes (fail-closed artifact-identity checks are already tested).
 
 ## Data storage
 
