@@ -12,6 +12,16 @@ protocol changes, and prospective registrations.
   (`dl_cross_asset_2026-07-14.md`). The 2019–2026 sample is SPENT for this
   family: no variant from it may be re-tuned or re-selected on that window.
 
+## Data notes
+
+- **2026-07-15** — Track 3 universe backfilled: 600 eligible symbols attempted,
+  599 stored (587 enter the panel with a full 30-day ADV window; 156 of them
+  delisted/stale — survivorship control intact). Known gap: **KLAYUSDT**
+  consistently stalls from this network (timed out twice under process
+  isolation) and is absent from the panel; KLAY was a top-50 asset in
+  2021-2023, so any Track 3 backtest over that period must disclose this hole
+  or fill it from another network before certification-grade work.
+
 ## Prospective registrations
 
 **E2 prospective shadow test** (registered 2026-07-15, before any forward data
