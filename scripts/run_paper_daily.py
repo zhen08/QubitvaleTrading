@@ -38,6 +38,18 @@ def main() -> None:
         incident_log.record(store, "P1", "backfill_failed", str(exc))
         raise SystemExit(1)
 
+    # 1.5) 跨资产日线（SPY/QQQ/GLD/VIX，DL 研究计划 §12.2 顺序：crypto → cross-asset）。
+    #      目前没有已注册账本消费该数据（overlay 未过 §11.1 门），纯数据保鲜：
+    #      任何失败 → P3 事故，绝不影响当日调仓；status.json 保持 fail-closed 语义，
+    #      留给未来消费者做"禁加仓"判断。
+    try:
+        from scripts.update_cross_asset import main as update_cross_asset
+        if update_cross_asset() != 0:
+            incident_log.record(store, "P3", "cross_asset_not_ok",
+                                "QC/staleness — see data/store/cross_asset/status.json")
+    except Exception as exc:  # noqa: BLE001
+        incident_log.record(store, "P3", "cross_asset_failed", str(exc))
+
     # 2) 新闻 + 风险旗（失败 → P2 事故；flags TTL 会让引擎保守禁加仓，不会静默沿用）
     if not args.no_news:
         try:
