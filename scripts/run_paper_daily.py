@@ -69,7 +69,7 @@ def main() -> None:
     print(json.dumps(summary, indent=1, ensure_ascii=False))
 
     # 4) 通知（多账本汇总）
-    lines = [f"*QVT paper* {summary['date']}"]
+    lines = [f"QVT paper {summary['date']}"]
     for book, bs in summary.get("books", {}).items():
         if "error" in bs:
             lines.append(f"{book}: ERROR {bs['error'][:80]}")
