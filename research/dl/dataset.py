@@ -150,18 +150,20 @@ def _sequences(hist: pd.DataFrame, scaled: pd.DataFrame, floor: float,
 
 def build_fold(table: pd.DataFrame, variant: str,
                train_end: pd.Timestamp, val_end: pd.Timestamp,
-               test_end: pd.Timestamp, embargo_days: int = 5) -> FoldData | None:
+               test_end: pd.Timestamp, embargo_days: int = 5,
+               require_test: bool = True) -> FoldData | None:
     """Expanding-window fold with a label-horizon embargo at every boundary.
 
     A row's label consumes bars up to decision_ts+5d, so training rows must end
     `embargo_days` before the validation window opens (and likewise val/test).
+    require_test=False is the freeze path (train+val only, deploy forward).
     """
     t = apply_variant(table, variant).set_index("decision_ts")
     emb = pd.Timedelta(days=embargo_days)
     train = t[t.index <= train_end - emb]
     val = t[(t.index > train_end) & (t.index <= val_end - emb)]
     test = t[(t.index > val_end) & (t.index <= test_end)]
-    if len(train) < 500 or len(val) < 100 or len(test) < 50:
+    if len(train) < 500 or len(val) < 100 or (require_test and len(test) < 50):
         return None
     # sequences may reach back across the boundary for *inputs* (normal
     # information set); labels are what the embargo protects.
@@ -172,6 +174,9 @@ def build_fold(table: pd.DataFrame, variant: str,
     for name, split_end, split in [("train", train_end - emb, train),
                                    ("val", val_end - emb, val),
                                    ("test", test_end, test)]:
+        if name == "test" and not require_test and not len(split):
+            fd.tensors["test"] = None
+            continue
         hist = t[t.index <= split_end]            # inputs may include earlier bars
         scaled = scaler.transform(hist[ALL_FEATURES], hist[MASKS])
         scaled[MASKS] = hist[MASKS].to_numpy()    # masks enter the context branch unscaled

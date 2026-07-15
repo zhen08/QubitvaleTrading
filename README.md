@@ -29,6 +29,8 @@ python -m scripts.run_phase1        # rerun the Phase 1 research suite (walk-for
 python -m scripts.backfill_cross_asset  # SPY/QQQ/GLD/VIX daily history (DL research plan §5)
 python -m scripts.update_cross_asset    # cross-asset incremental + QC + freshness status (exit 1 = fail-closed)
 python -m scripts.run_dl_research       # cross-asset DL suite: B1-B3 + E1-E4 walk-forward + gate report
+python -m scripts.freeze_dl_shadow      # (re)freeze the prospective E2 shadow model (trial ledger entry)
+python -m scripts.backfill_universe     # Track 3: all eligible Vision spot USDT pairs + point-in-time panel
 python -m scripts.run_paper_daily   # ★ Phase 2 daily job: data → news scoring → signals → paper rebalance → notify
 python -m scripts.paper_status      # view paper positions/equity/signals/risk flags
 python -m scripts.paper_review      # generate the weekly review (paper vs model replay vs Phase 1 expected band)

@@ -68,6 +68,15 @@ def main() -> None:
     summary = run_daily(settings)
     print(json.dumps(summary, indent=1, ensure_ascii=False))
 
+    # 3.5) E2 前瞻影子记录（试验台账预注册，见 research/reports/dl_trial_ledger.md）。
+    #      只记 multiplier，不动任何账本；失败 → P3，绝不影响当日结果。
+    if settings.get("dl_shadow", {}).get("model_id"):
+        try:
+            from research.dl.shadow import run_shadow
+            run_shadow(settings)
+        except Exception as exc:  # noqa: BLE001
+            incident_log.record(store, "P3", "dl_shadow_failed", str(exc))
+
     # 4) 通知（多账本汇总）
     lines = [f"QVT paper {summary['date']}"]
     for book, bs in summary.get("books", {}).items():

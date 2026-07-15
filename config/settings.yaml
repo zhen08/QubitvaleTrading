@@ -50,6 +50,10 @@ cross_asset:
   max_stale_sessions: 1             # 超过 1 个已收盘 NYSE 会话未入库 → stale（fail-closed 禁加仓）
   backfill_start: "2018-09-01"      # 90 天序列回看 + 指标 warmup，先于 2019-01 加密史
 
+# ---- E2 前瞻影子测试（预注册：research/reports/dl_trial_ledger.md；非账本）----
+dl_shadow:
+  model_id: "e2_shadow_2026-07-14"  # scripts.freeze_dl_shadow 产物；重训后更新
+
 intel:
   event_gate_lookahead_hours: 36  # 事件前 36h 起禁开新仓（日频粒度下覆盖"前2h"精神）
   event_gate_cooldown_hours: 1    # 事件后 1h 解除

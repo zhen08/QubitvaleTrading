@@ -91,6 +91,16 @@ def cross_asset_status_ok(store: Path) -> bool:
         return False
 
 
+def apply_calibration(man: dict, p_raw: np.ndarray) -> np.ndarray | None:
+    """Reconstruct the frozen isotonic map from manifest breakpoints (None when
+    the tail gate was registered inactive — fewer than 10 validation positives)."""
+    cal = man.get("calibration")
+    if not (man.get("tail_gate_active") and cal):
+        return None
+    return np.interp(p_raw, np.asarray(cal["x"], dtype=float),
+                     np.asarray(cal["y"], dtype=float))
+
+
 def compute_risk_multiplier(store: Path, model_id: str,
                             feature_table: pd.DataFrame) -> pd.DataFrame:
     """Latest-row risk multiplier per symbol from the frozen ensemble.
@@ -100,7 +110,8 @@ def compute_risk_multiplier(store: Path, model_id: str,
     """
     import torch
 
-    from research.dl.dataset import CTX_FEATURES, GROUP_FEATURES, GROUP_MASK, SEQ_FEATURES
+    from research.dl.dataset import (CTX_FEATURES, GROUP_FEATURES, GROUP_MASK,
+                                     SEQ_FEATURES, apply_variant)
     from research.dl.models import LOOKBACK, CrossAssetTCN
     from research.dl.overlay import risk_multiplier
     from features.cross_asset import ALL_FEATURES, MASKS
@@ -109,6 +120,8 @@ def compute_risk_multiplier(store: Path, model_id: str,
     if not cross_asset_status_ok(store):
         raise OverlayUnavailable("cross-asset status not OK — risk state unknown")
 
+    # Ablate feature groups exactly as the variant was trained (E2: no VIX/GLD).
+    feature_table = apply_variant(feature_table, man["variant"])
     mean = pd.Series(man["scaler_mean"], index=ALL_FEATURES)
     std = pd.Series(man["scaler_std"], index=ALL_FEATURES)
     rows = []
@@ -136,11 +149,11 @@ def compute_risk_multiplier(store: Path, model_id: str,
             vols.append(float(pv))
             probs.append(float(torch.sigmoid(tl)))
         sigma_hat = float(np.exp(np.mean(vols)))
-        p_tail = float(np.mean(probs))
-        mult = float(risk_multiplier(np.array([sigma_hat]), man["sigma_ref"],
-                                     np.array([p_tail]) if man.get("tail_gate_active")
-                                     else None)[0])
+        p_raw = float(np.mean(probs))
+        p_cal = apply_calibration(man, np.array([p_raw]))
+        mult = float(risk_multiplier(np.array([sigma_hat]), man["sigma_ref"], p_cal)[0])
         rows.append({"symbol": sym, "decision_ts": g["decision_ts"].iloc[-1],
-                     "sigma_hat": sigma_hat, "p_tail": p_tail,
+                     "sigma_hat": sigma_hat, "p_tail_raw": p_raw,
+                     "p_tail_cal": float(p_cal[0]) if p_cal is not None else np.nan,
                      "multiplier": mult, "checkpoint_hash": man["checkpoint_hash"]})
     return pd.DataFrame(rows)
