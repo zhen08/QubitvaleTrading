@@ -24,8 +24,17 @@ protocol changes, and prospective registrations.
 
 ## Prospective registrations
 
+**Track 3 cross-sectional ranker** (registered 2026-07-16, before any model
+code or panel contact): full protocol in `track3_ranker_preregistration.md`.
+Family = 3 GRU widths {5,10,20} + deterministic momentum baseline R1 = 4
+trials, added to the cumulative program count. Universe: top-50 by ADV30 with
+a $5M floor, ≥30 names per usable date, point-in-time from the Vision panel
+(KLAYUSDT gap must be resolved or quantified before the first run). Gate per
+§6 of the preregistration; width selection on validation folds only.
+
 **E2 prospective shadow test** (registered 2026-07-15, before any forward data
-was observed):
+was observed; freeze history at the end of this file — the freeze script
+appends there):
 
 - Hypothesis: the E2 configuration (crypto + SPY + QQQ/SPY spread, no VIX/GLD)
   improves the donchian book's net risk-adjusted return versus B0 and B2.
