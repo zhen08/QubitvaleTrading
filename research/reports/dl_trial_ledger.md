@@ -11,6 +11,13 @@ protocol changes, and prospective registrations.
   (7 trials; 49 fold×variant rows). Verdict: REJECT at the §11.1 gate
   (`dl_cross_asset_2026-07-14.md`). The 2019–2026 sample is SPENT for this
   family: no variant from it may be re-tuned or re-selected on that window.
+- **2026-07-16** — Track 3 ranker family: GRU widths {5,10,20} + R1 (4 trials;
+  6 OOS folds, 2023-01 → 2026-07). Verdict: REJECT at the §6 gate
+  (`track3_ranker_2026-07-16.md`) — statistically significant relative skill
+  vs R1 (LW p=0.031) but negative absolute OOS Sharpe (−0.16) in a collapsing
+  long-only altcoin universe (R0 −40% CAGR). This window is SPENT for
+  long-only selection in this family; a long/short use of the signal requires
+  a new preregistration and fresh selection data.
 
 ## Data notes
 
