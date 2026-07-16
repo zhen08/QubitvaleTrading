@@ -91,7 +91,23 @@ trials per the ledger.
 - Passing promotes an **exploratory paper book proposal only** (new registry
   entry, own capital, §12 discipline); it is not certification.
 
-## 7. Non-negotiables
+## 7. Amendments (2026-07-16, recorded during implementation, before any run)
+
+Three details the original text under-specified, pinned before the first
+walk-forward run (no results of any kind had been observed):
+
+1. **Width selection criterion**: per fold, the width whose 5-seed ensemble
+   maximizes the validation-window **net Sharpe of the §4 portfolio rule**
+   (the same economics as the gate); ties go to the smaller width.
+2. **R1 confidence analog**: R1's counterpart of the `p < 0.50` cash rule is
+   trailing 21-day return ≤ 0 (no long without positive momentum). R0 has no
+   threshold.
+3. **Delisting handling**: a held asset with no bar on the next day
+   contributes 0 return that day and is force-exited with normal cost;
+   training rows without a next-day return (delisting eve) carry no label and
+   are dropped from the loss.
+
+## 8. Non-negotiables
 
 - No feature, label, threshold, width set, or universe-rule change after the
   first walk-forward run; extensions are new preregistrations.
