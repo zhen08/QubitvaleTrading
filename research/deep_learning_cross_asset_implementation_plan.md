@@ -150,7 +150,7 @@ Never infer `available_at` solely from a provider's date label. Store it explici
 
 ### 5.4 Timing and no-lookahead alignment
 
-The daily job runs shortly after 00:00 UTC (the Mac launchd job fires at 08:10 local, ≈00:10 UTC). The most recent regular U.S. equity close (16:00 ET ≈ 20:00/21:00 UTC depending on DST) is normally available roughly three to four hours earlier. Two provider-timing caveats:
+The daily job runs shortly after 00:00 UTC (the systemd user timer on the DGX Spark workstation fires at 08:10 Asia/Shanghai, ≈00:10 UTC). The most recent regular U.S. equity close (16:00 ET ≈ 20:00/21:00 UTC depending on DST) is normally available roughly three to four hours earlier. Two provider-timing caveats:
 
 - The official closing auction print and the final VIX value are disseminated minutes after 16:00 ET (Cboe disseminates the final VIX index value at approximately 16:15 ET), and EOD files may be revised later in the evening. Set `available_at` conservatively — e.g., ingestion time on first observation, never earlier than 21:30 UTC for a same-day close — rather than back-dating it to the exchange close.
 - Backfilled history gets `available_at = ingested_at` semantics only for training-period rows where the conservative rule above is provably satisfied; the as-of join below is what enforces correctness either way.

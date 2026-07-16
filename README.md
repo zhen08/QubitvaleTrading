@@ -2,7 +2,7 @@
 
 A personal crypto quantitative trading system (spot + USDT-M perpetuals), built in phases following the five-layer architecture in §6 of the [research report](../../Documents/Claude/Projects/Crypto/auto-trading-system-research-2026-07-12.md).
 
-**Current status (revised in the 2026-07-13 review)**: Phase 1 = **research candidate PASS, statistical certification FAIL** (deployment portfolio DSR(N=4)=0.868 / DSR(N=32)=0.750, both <0.95; see `research/reports/phase1_report_2026-07-13.md`; an earlier 0.395 figure circulated in this README was a stale pre-fix value — see `research/reports/dsr_reconciliation_2026-07-14.md`). Phase 2 = **exploratory paper validation is set up** (started 2026-07-12), but **automation is not yet deployed** — the 6-week gate clock only officially starts once you run `bash scripts/setup_mac.sh` on the Mac to complete deployment. This repository currently does not constitute any basis for live deployment.
+**Current status (revised in the 2026-07-13 review)**: Phase 1 = **research candidate PASS, statistical certification FAIL** (deployment portfolio DSR(N=4)=0.868 / DSR(N=32)=0.750, both <0.95; see `research/reports/phase1_report_2026-07-13.md`; an earlier 0.395 figure circulated in this README was a stale pre-fix value — see `research/reports/dsr_reconciliation_2026-07-14.md`). Phase 2 = **exploratory paper validation running with automation deployed** (books started 2026-07-12/13; daily systemd user timer on the DGX Spark since 2026-07-13, 08:10 Asia/Shanghai) — the 6-week gate clock runs from stable automated operation as computed by `paper_review`. This repository currently does not constitute any basis for live deployment.
 
 > Disclaimer: This repository is purely a personal research tool and does not constitute investment advice. Leveraged futures trading carries extremely high risk.
 
@@ -57,16 +57,18 @@ yet another layer of N=2 selection bias); if only one passes, pilot only that on
 The process and discipline for adding new books are in the header of `strategies/registry.py` —
 every book added enlarges the multiple-testing space.
 
-**Automated deployment (required, one command in the Mac terminal)**:
+**Automated deployment (running on the DGX Spark since 2026-07-13)**: the daily job runs via a
+**systemd user timer** on the development workstation (NVIDIA DGX Spark, `spark-2a1a`,
+Ubuntu 24.04 arm64):
 
 ```
-bash scripts/setup_mac.sh
+~/.config/systemd/user/qubitvale-paper.{service,timer}   # OnCalendar 08:10 Asia/Shanghai (≈00:10 UTC), Persistent=true
+systemctl --user status qubitvale-paper.timer            # inspect; Persistent=true catches up missed runs after downtime
 ```
 
-The script creates an in-repo `.venv` (not dependent on whether the system Python has pandas),
-installs the launchd daily job (local 08:10; catches up after wake if a run was missed while
-asleep), **freezes the expected-band baseline** (`scripts.freeze_baseline`, so the 6-week gate's
-reference is fixed from here on and does not drift with data updates), and runs once immediately.
+The expected-band baseline is frozen via `scripts.freeze_baseline` (so the 6-week gate's
+reference is fixed and does not drift with data updates). `scripts/setup_mac.sh` remains
+available only as a legacy/alternative path for running the stack on a Mac via launchd.
 The daily job is idempotent and can be rerun arbitrarily, and the entire run holds a
 **process-level exclusive lock** (overlapping manual/scheduled jobs auto-skip, preventing lost
 updates): missed days are back-filled at that day's **open price ±slip_floor** (mode=catchup,
@@ -151,7 +153,7 @@ FROM klines GROUP BY 1,2,3 ORDER BY 1,2,3;
 |---|---|---|---|
 | 0 | Data foundation + repo skeleton | All QC passes, cross-source <0.5% | ✅ 2026-07-12 |
 | 1 | Research platform (cost model, walk-forward, DSR/PBO) + baseline strategies (trend/TSMOM/carry simulation) | Deployment target DSR(N=4) and (N=32) both ≥0.95 | ⚠️ Research candidate PASS / **statistical certification FAIL** (0.868 / 0.750) |
-| 2 | Exploratory paper trading (in-house paper engine¹ + multi-book: donchian + tsmom + event gate/news flags) | Each book ≥6 consecutive weeks meeting the gate after automation | 🟡 Set up; automation pending `setup_mac.sh` |
+| 2 | Exploratory paper trading (in-house paper engine¹ + multi-book: donchian + tsmom + event gate/news flags) | Each book ≥6 consecutive weeks meeting the gate after automation | 🟡 Running; automated on the DGX Spark (systemd timer) since 2026-07-13 |
 | 3 | Small live trading (hard risk controls, no-withdrawal-permission key, kill switch) | 4–8 weeks consistent with paper | ⬜ |
 | 4 | Multi-exchange expansion / event-driven / monthly recalibration | Ongoing | ⬜ |
 

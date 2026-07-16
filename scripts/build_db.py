@@ -1,6 +1,6 @@
 """(Re)build DuckDB views over the parquet store.
 
-DuckDB 视图存的是字面路径，换机器（容器 ↔ Mac）后运行本脚本重建即可：
+DuckDB 视图存的是字面路径，换机器（容器 ↔ DGX Spark 工作站等）后运行本脚本重建即可：
     python -m scripts.build_db
 生成 data/store/quant.duckdb，视图：klines / funding_um / funding_bitget / news_rss / news_gdelt
 """

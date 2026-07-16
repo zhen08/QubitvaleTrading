@@ -2,8 +2,8 @@
 
 Usage: python -m scripts.run_paper_daily [--no-news]
 幂等：任意时间、任意次数重跑都安全；错过的天数会以开盘价 catchup 补账（计入运维指标）。
-建议 Mac cron（UTC 00:10 = 北京 08:10）：
-  10 8 * * * cd ~/Dev/QubitvaleTrading && /usr/bin/python3 -m scripts.run_paper_daily >> logs/paper.log 2>&1
+生产调度：DGX Spark 上的 systemd 用户定时器（qubitvale-paper.timer，
+OnCalendar 08:10 Asia/Shanghai ≈ 00:10 UTC，Persistent=true 补跑停机错过的天）。
 """
 from __future__ import annotations
 
