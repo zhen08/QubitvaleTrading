@@ -54,7 +54,8 @@ class TrainedRanker:
     best_epoch: int
 
 
-def train_seed(seed: int, width: int, X_tr, y_tr, X_va, y_va) -> TrainedRanker:
+def train_seed(seed: int, width: int, X_tr, y_tr, X_va, y_va,
+               max_epochs: int | None = None) -> TrainedRanker:
     _determinism(seed)
     model = GRURanker(width)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
@@ -63,7 +64,7 @@ def train_seed(seed: int, width: int, X_tr, y_tr, X_va, y_va) -> TrainedRanker:
     n = len(X_tr)
     gen = torch.Generator().manual_seed(seed)
     best, best_state, best_epoch, bad = float("inf"), None, 0, 0
-    for epoch in range(MAX_EPOCHS):
+    for epoch in range(max_epochs if max_epochs is not None else MAX_EPOCHS):
         model.train()
         perm = torch.randperm(n, generator=gen)
         for i in range(0, n, BATCH):

@@ -4,11 +4,13 @@ selected per fold on the validation-window net Sharpe of the §4 portfolio
 rule (amendment 1); all widths still produce OOS returns for PBO.
 
 Parallelism: the 15 (width × seed) trainings per fold are independent and run
-in a fork-based process pool. Fold tensors are shared with workers via module
-globals (copy-on-write on Linux — nothing large is pickled); each training is
-internally seeded, so scheduling order cannot affect results and the output is
-bit-identical to the sequential path. Worker count via RANKER_WORKERS
-(default: cores // torch-threads).
+in a **spawn**-based process pool — fork is unsafe here because the parent has
+already run pyarrow's thread pools during data loading, and a forked child can
+inherit a held lock and deadlock (observed 2026-07-16: five workers parked on
+futexes with zero CPU). Fold tensors are shipped once per worker through the
+pool initializer; each training is internally seeded, so scheduling order
+cannot affect results and the output is bit-identical to the sequential path.
+Worker count via RANKER_WORKERS (default: cores // torch-threads).
 """
 from __future__ import annotations
 
@@ -32,7 +34,7 @@ VAL_DAYS = 182
 TEST_DAYS = 182
 EMBARGO_DAYS = 5
 
-_FOLD_TENSORS: dict = {}      # set in the parent right before each fold's pool forks
+_FOLD_TENSORS: dict = {}      # populated in each worker by the pool initializer
 
 
 def _n_workers() -> int:
@@ -42,29 +44,35 @@ def _n_workers() -> int:
     return max(1, (os.cpu_count() or 4) // N_THREADS)
 
 
-def _train_task(args: tuple[int, int]) -> tuple[int, TrainedRanker]:
-    """Runs in a forked worker: tensors come from the inherited module global."""
-    width, seed = args
+def _init_worker(X_tr, y_tr, X_va, y_va) -> None:
+    """Spawn initializer: receives the fold tensors once per worker."""
+    global _FOLD_TENSORS
+    _FOLD_TENSORS = {"X_tr": X_tr, "y_tr": y_tr, "X_va": X_va, "y_va": y_va}
+
+
+def _train_task(args: tuple[int, int, int]) -> tuple[int, TrainedRanker]:
+    """Runs in a worker; max_epochs travels with the task because spawn
+    re-imports modules (parent-side monkeypatches would not propagate)."""
+    width, seed, max_epochs = args
     t = _FOLD_TENSORS
-    return width, train_seed(seed, width, t["X_tr"], t["y_tr"], t["X_va"], t["y_va"])
+    return width, train_seed(seed, width, t["X_tr"], t["y_tr"], t["X_va"], t["y_va"],
+                             max_epochs=max_epochs)
 
 
 def _train_all_widths(X_tr, y_tr, X_va, y_va, widths, seeds) -> dict[int, list[TrainedRanker]]:
     """All (width × seed) trainings for one fold, in parallel; deterministic
     ensemble order is restored by sorting on the fixed seed list."""
-    global _FOLD_TENSORS
-    _FOLD_TENSORS = {"X_tr": X_tr, "y_tr": y_tr, "X_va": X_va, "y_va": y_va}
-    tasks = [(w, s) for w in widths for s in seeds]
+    import research.dl.ranker.model as M
+    tasks = [(w, s, M.MAX_EPOCHS) for w in widths for s in seeds]
     workers = _n_workers()
     if workers == 1:
+        _init_worker(X_tr, y_tr, X_va, y_va)
         results = [_train_task(t) for t in tasks]
     else:
-        import torch
-        torch.set_num_threads(1)          # parent stays single-threaded pre-fork
-        ctx = mp.get_context("fork")
-        with ctx.Pool(processes=workers) as pool:
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(processes=workers, initializer=_init_worker,
+                      initargs=(X_tr, y_tr, X_va, y_va)) as pool:
             results = pool.map(_train_task, tasks)
-        torch.set_num_threads(N_THREADS)  # restore for parent-side prediction
     by_width: dict[int, list[TrainedRanker]] = {w: [] for w in widths}
     for width, trained in results:
         by_width[width].append(trained)

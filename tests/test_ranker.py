@@ -169,3 +169,41 @@ def test_parallel_training_matches_sequential(monkeypatch):
             assert a.val_loss == b.val_loss
             for k in a.state_dict:
                 assert torch.equal(a.state_dict[k], b.state_dict[k])
+
+
+def test_vectorized_sequences_match_reference(rd):
+    torch = pytest.importorskip("torch")
+    floor = D.fold_floor(rd, rd.ret.index[:150])
+    z = D.normalized_returns(rd, floor)
+    zrank = D.cross_rank(z, rd.member)
+    dates = rd.ret.index[120:190]
+    out = D.build_sequences(rd, z, zrank, dates, require_label=True)
+    assert out is not None
+    X, y, meta = out
+
+    # naive reference loop (the original implementation)
+    Z = z.to_numpy(np.float32)
+    R = zrank.to_numpy(np.float32)
+    pos_of = {d: i for i, d in enumerate(z.index)}
+    xs, ys, ms = [], [], []
+    for d in dates:
+        i = pos_of.get(d)
+        if i is None or i < D.SEQ_LEN - 1:
+            continue
+        for j, sym in enumerate(z.columns):
+            if not rd.member.at[d, sym]:
+                continue
+            lab = rd.label.at[d, sym]
+            if not np.isfinite(lab):
+                continue
+            win = Z[i - D.SEQ_LEN + 1:i + 1, j]
+            if not np.isfinite(win).all():
+                continue
+            rwin = np.nan_to_num(R[i - D.SEQ_LEN + 1:i + 1, j], nan=0.5)
+            xs.append(np.stack([win, rwin], axis=1))
+            ys.append(lab)
+            ms.append((d, sym))
+    assert len(xs) == len(X) and len(xs) > 0
+    assert list(meta) == ms
+    assert torch.equal(X, torch.from_numpy(np.stack(xs)))
+    assert torch.equal(y, torch.tensor(np.asarray(ys, dtype=np.float32)))

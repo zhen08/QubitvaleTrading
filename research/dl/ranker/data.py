@@ -120,36 +120,38 @@ def build_sequences(rd: RankerData, z: pd.DataFrame, zrank: pd.DataFrame,
 
     Sequence windows may reach back before `dates` (normal information set);
     a row is dropped if its 90-day window has any NaN in channel 1.
+    Fully vectorized: per-cell pandas access here once cost ~40 min per fold.
     """
     import torch
     all_dates = z.index
-    pos_of = {d: i for i, d in enumerate(all_dates)}
     Z = z.to_numpy(dtype=np.float32)
-    R = zrank.to_numpy(dtype=np.float32)
-    xs, ys, meta = [], [], []
-    for d in dates:
-        i = pos_of.get(d)
-        if i is None or i < SEQ_LEN - 1:
-            continue
-        row_members = rd.member.loc[d]
-        for j, sym in enumerate(z.columns):
-            if not row_members.iloc[j]:
-                continue
-            y = rd.label.at[d, sym]
-            if require_label and not np.isfinite(y):
-                continue
-            win = Z[i - SEQ_LEN + 1:i + 1, j]
-            if not np.isfinite(win).all():
-                continue
-            rwin = np.nan_to_num(R[i - SEQ_LEN + 1:i + 1, j], nan=0.5)
-            xs.append(np.stack([win, rwin], axis=1))
-            ys.append(y if np.isfinite(y) else np.nan)
-            meta.append((d, sym))
-    if not xs:
+    R = np.nan_to_num(zrank.to_numpy(dtype=np.float32), nan=0.5)
+    M = rd.member.reindex(index=all_dates, columns=z.columns).fillna(False).to_numpy(bool)
+    Y = rd.label.reindex(index=all_dates, columns=z.columns).to_numpy(np.float32)
+    # valid 90-day channel-1 window ending at i, per column
+    finite = np.isfinite(Z)
+    csum = np.cumsum(finite, axis=0)
+    full = np.zeros_like(finite)
+    full[SEQ_LEN - 1:] = (csum[SEQ_LEN - 1:]
+                          - np.vstack([np.zeros((1, Z.shape[1]), dtype=int),
+                                       csum[:-SEQ_LEN]])) == SEQ_LEN
+
+    date_mask = all_dates.isin(dates)
+    ok = M & full & date_mask[:, None]
+    if require_label:
+        ok &= np.isfinite(Y)
+    ii, jj = np.where(ok)
+    if not len(ii):
         return None
-    X = torch.from_numpy(np.stack(xs))
-    y = torch.tensor(np.asarray(ys, dtype=np.float32))
-    return X, y, pd.MultiIndex.from_tuples(meta, names=["date", "symbol"])
+    # gather windows: sliding_window_view over axis 0, then fancy-index rows
+    zw = np.lib.stride_tricks.sliding_window_view(Z, SEQ_LEN, axis=0)  # [T-89, C, 90]
+    rw = np.lib.stride_tricks.sliding_window_view(R, SEQ_LEN, axis=0)
+    sel = ii - (SEQ_LEN - 1)
+    X = np.stack([zw[sel, jj], rw[sel, jj]], axis=2).astype(np.float32)  # [N, 90, 2]
+    y = Y[ii, jj]
+    meta = pd.MultiIndex.from_arrays(
+        [all_dates[ii], z.columns.to_numpy()[jj]], names=["date", "symbol"])
+    return torch.from_numpy(X.copy()), torch.tensor(y), meta
 
 
 def standardize(X, stats=None):

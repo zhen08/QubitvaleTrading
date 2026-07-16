@@ -59,7 +59,8 @@ def write_report(date, ev, ledger, klay_present: bool, quick: bool) -> str:
         "", "## Regime slices", "",
         f"- GRU: { {k: v['sharpe'] for k, v in g['regimes'].items() if v['sharpe'] is not None} }",
         f"- R1:  { {k: v['sharpe'] for k, v in ev['R1']['regimes'].items() if v['sharpe'] is not None} }",
-        "", "## §6 gate", "", "```json", json.dumps(ev["gate"], indent=2), "```", "",
+        "", "## §6 gate", "", "```json",
+        json.dumps(ev["gate"], indent=2, default=str), "```", "",
         "## Fold ledger", "",
         "See companion CSV. Width selection used validation net Sharpe only "
         "(amendment 1); every width's OOS series enters PBO.",

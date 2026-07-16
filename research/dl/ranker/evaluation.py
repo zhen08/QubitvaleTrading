@@ -121,7 +121,7 @@ def evaluate(rd: D.RankerData, scores: dict, ledger: list[dict]) -> dict:
         "pbo_widths_plus_R1": metrics.pbo_cscv(trial_mat),
     }
     g = ev["GRU_selected"]
-    ev["gate"] = {
+    ev["gate"] = {k: bool(v) for k, v in {
         "beats_R0_sharpe": g["summary"]["sharpe"] > ev["R0"]["summary"]["sharpe"],
         "beats_R1_sharpe": g["summary"]["sharpe"] > ev["R1"]["summary"]["sharpe"],
         "lw_vs_R1_p<0.05": g["lw_vs_R1"]["sharpe_p"] < 0.05,
@@ -135,7 +135,7 @@ def evaluate(rd: D.RankerData, scores: dict, ledger: list[dict]) -> dict:
         "stress2x_sharpe>0": g["stress2x_sharpe"] > 0,
         "concentration<=40pct": g["concentration_max_share"] <= 0.40,
         "turnover_rule": not (gross_edge > 0 and incr_cost > 0.5 * gross_edge),
-    }
-    ev["gate"]["ALL_PASS"] = all(v for v in ev["gate"].values() if v is not None)
+    }.items()}                                        # numpy bools -> JSON-safe
+    ev["gate"]["ALL_PASS"] = all(ev["gate"].values())
     ev["nets"] = {"GRU": sim_sel.net, "R0": sim_r0.net, "R1": sim_r1.net, "R2": r2}
     return ev
