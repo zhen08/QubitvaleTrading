@@ -207,3 +207,62 @@ def test_vectorized_sequences_match_reference(rd):
     assert list(meta) == ms
     assert torch.equal(X, torch.from_numpy(np.stack(xs)))
     assert torch.equal(y, torch.tensor(np.asarray(ys, dtype=np.float32)))
+
+
+# ---------------- L/S mechanical transform ----------------
+
+def _ls_day(scores: dict, shortable=None, held_long=None, held_short=None, neutral=0.5):
+    syms = list(scores)
+    row = pd.Series(scores)
+    member = pd.Series(True, index=syms)
+    return P.ls_targets(row, member, shortable if shortable is not None else set(syms),
+                        held_long or set(), held_short or set(), neutral=neutral)
+
+
+def test_ls_dollar_neutral_when_both_legs_fill():
+    scores = {f"S{i:02d}": 1.0 - i * 0.05 for i in range(15)}  # S00 best … S14 worst
+    t = _ls_day(scores)
+    longs = {s for s, w in t.items() if w > 0}
+    shorts = {s for s, w in t.items() if w < 0}
+    assert longs == {"S00", "S01", "S02", "S03", "S04"}
+    assert shorts == {"S10", "S11", "S12", "S13", "S14"}
+    assert abs(sum(t.values())) < 1e-12                      # net 0
+    assert sum(abs(w) for w in t.values()) == pytest.approx(1.0)  # gross 1
+
+
+def test_ls_short_requires_perp():
+    scores = {f"S{i:02d}": 1.0 - i * 0.05 for i in range(15)}
+    t = _ls_day(scores, shortable={"S13", "S14"})
+    shorts = {s for s, w in t.items() if w < 0}
+    assert shorts == {"S13", "S14"}                          # others stay cash
+    assert sum(1 for w in t.values() if w > 0) == 5
+
+
+def test_ls_confidence_thresholds():
+    # all-bearish scores: long leg empty (needs >= 0.5), short leg fills —
+    # one-sided books are allowed per the 2026-07-17 registration clarification
+    scores = {f"S{i:02d}": 0.49 - i * 0.01 for i in range(12)}
+    t = _ls_day(scores)
+    assert all(w < 0 for w in t.values()) and len(t) == 5
+    # R1LS analog with neutral=0: positive momentum longs, negative shorts
+    mom = {"A": 0.3, "B": 0.2, "C": 0.1, "D": 0.05, "E": 0.01,
+           "F": -0.01, "G": -0.05, "H": -0.1, "I": -0.2, "J": -0.3,
+           "K": 0.15, "L": -0.15}
+    t = _ls_day(mom, neutral=0.0)
+    assert all(mom[s] > 0 for s, w in t.items() if w > 0)
+    assert all(mom[s] < 0 for s, w in t.items() if w < 0)
+
+
+def test_ls_hysteresis_keeps_mid_bottom_short():
+    # 16 names: P has score 0.49 (short-confident) at rank-from-top 11 =>
+    # bottom-rank 6: inside the keep zone (>= n-EXIT_RANK+1 = 7 by top-rank),
+    # outside the entry zone (needs top-rank >= n-4 = 12)
+    scores = {f"S{i:02d}": 0.9 - i * 0.01 for i in range(10)}
+    scores.update({"P": 0.49, "K": 0.48, "L": 0.47, "M": 0.46, "N": 0.45, "O": 0.44})
+    held = _ls_day(scores, held_short={"P"})
+    fresh = _ls_day(scores)
+    assert held.get("P", 0.0) < 0        # kept while held (hysteresis)
+    assert fresh.get("P", 0.0) == 0.0    # but not enterable fresh
+    # a long-side name can never stay short
+    t2 = _ls_day(scores, held_short={"S03"})
+    assert t2.get("S03", 0.0) >= 0

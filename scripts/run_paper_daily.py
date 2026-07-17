@@ -96,6 +96,22 @@ def main() -> None:
     lines.append(f"incidents: {len(summary.get('incidents', []))}")
     telegram.send("\n".join(lines))
 
+    # 5) Track 3-LS 前瞻影子（预注册 track3_ls_shadow_preregistration.md）。
+    #    放在通知之后：宇宙尾部增量 + 面板重建可能要几分钟，绝不拖延账本与通知；
+    #    任何失败 → P3，不影响任何账本。
+    if settings.get("dl_shadow", {}).get("ranker_ls_model_id"):
+        try:
+            from data.collectors.universe import (build_universe_panel,
+                                                  update_universe_tail)
+            from research.dl.ranker.shadow import run_ls_shadow
+            spot_dir = store / "market" / "spot"
+            symbols = sorted(p.name for p in spot_dir.iterdir() if p.is_dir())
+            update_universe_tail(store, symbols)
+            build_universe_panel(store, symbols)
+            run_ls_shadow(settings)
+        except Exception as exc:  # noqa: BLE001
+            incident_log.record(store, "P3", "ls_shadow_failed", str(exc))
+
 
 if __name__ == "__main__":
     main()

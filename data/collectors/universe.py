@@ -124,3 +124,65 @@ def universe_coverage(panel: pd.DataFrame, top_n: int = 50) -> pd.DataFrame:
     })
     out["track3_prereq_30plus"] = out["assets_with_adv30_median"] >= 30
     return out
+
+
+UM_KLINE_PREFIX = "data/futures/um/monthly/klines/"
+
+
+def list_um_symbols() -> set[str]:
+    """All USDT-M perp symbols ever archived on Vision (short-leg eligibility)."""
+    symbols: set[str] = set()
+    marker = ""
+    while True:
+        r = http_get(S3_LIST, params={"prefix": UM_KLINE_PREFIX, "delimiter": "/",
+                                      "marker": marker}, timeout=60)
+        text = r.text
+        symbols.update(re.findall(
+            rf"<Prefix>{re.escape(UM_KLINE_PREFIX)}([^<]+)/</Prefix>", text))
+        m = re.search(r"<NextMarker>([^<]+)</NextMarker>", text)
+        if not (m and "<IsTruncated>true</IsTruncated>" in text):
+            break
+        marker = m.group(1)
+    log.info("vision UM listing: %d perp symbols", len(symbols))
+    return symbols
+
+
+def update_universe_tail(store: Path, symbols: list[str], workers: int = 16) -> int:
+    """Lean daily incremental: fetch only missing T-1 daily files per symbol
+    (no monthly refetch, no checksums-per-month sweep). Returns symbols updated."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from data.collectors import binance_vision as bv
+    from data.collectors.common import utc_today
+
+    yesterday = utc_today() - pd.Timedelta(days=1)
+
+    def _one(sym: str) -> int:
+        path = storeio.klines_path(store, "spot", sym, "1d")
+        existing = storeio.read_parquet_if_exists(path)
+        if existing is None or not len(existing):
+            return 0
+        last = pd.Timestamp(existing["ts"].max()).floor("D")
+        days = pd.date_range(last + pd.Timedelta(days=1), yesterday, freq="D", tz="UTC")
+        if not len(days) or len(days) > 21:      # long gaps belong to the full backfill
+            return 0
+        frames = []
+        for day in days:
+            try:
+                df = bv.fetch_kline_day("spot", sym, "1d", day.strftime("%Y-%m-%d"))
+            except Exception:  # noqa: BLE001 — tail file not published yet / transient
+                df = None
+            if df is not None and len(df):
+                frames.append(df)
+        if not frames:
+            return 0
+        merged = storeio.merge_on_ts(existing, pd.concat(frames, ignore_index=True))
+        merged["symbol"], merged["market"], merged["timeframe"] = sym, "spot", "1d"
+        storeio.write_parquet(merged, path)
+        return 1
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        results = list(ex.map(_one, symbols))
+    n = sum(results)
+    log.info("universe tail update: %d/%d symbols advanced", n, len(symbols))
+    return n

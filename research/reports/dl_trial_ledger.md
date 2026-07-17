@@ -31,6 +31,16 @@ protocol changes, and prospective registrations.
 
 ## Prospective registrations
 
+**Track 3-LS long/short shadow test** (registered 2026-07-17, before any
+forward data): full protocol in `track3_ls_shadow_preregistration.md` — a
+mechanical L/S transform of the frozen ranker (±10% top-5/bottom-5, short leg
+perp-gated, UM costs + funding at evaluation). **Prospective only**: the
+2023–2026 window is contaminated for L/S selection and no historical L/S
+backtest may support promotion. One preregistered comparison after ≥365
+logged days (LW: net>0 and net>R1-LS). Frozen 2026-07-17 as
+`ls_shadow_2026-07-14` (width 10, ckpt `df91f51ab1748289`); daily logging in
+run_paper_daily step 5 → `data/store/dl_shadow/ranker_ls.parquet`.
+
 **Track 3 cross-sectional ranker** (registered 2026-07-16, before any model
 code or panel contact): full protocol in `track3_ranker_preregistration.md`.
 Family = 3 GRU widths {5,10,20} + deterministic momentum baseline R1 = 4
