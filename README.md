@@ -119,6 +119,14 @@ paired tests, DSR(N=7)/PBO, regime slices, and a 2x-cost stress case. Reports la
 is **not registered** as a paper book and must stay unregistered until the plan's §11.1
 gate passes (fail-closed artifact-identity checks are already tested).
 
+**Two Python environments** (both in-repo, both gitignored): `.venv` = production + frozen
+research families — **CPU-only torch, do not swap it**; every frozen artifact's identity
+hash was produced under CPU determinism. `venv-gpu` = torch cu130 for the GB10 — measured
+20-30× faster for GRU-class training and bitwise-deterministic with
+`torch.use_deterministic_algorithms(True)` + `CUBLAS_WORKSPACE_CONFIG=:4096:8`; reserved
+for **future preregistered families** that register GPU training from day one (a frozen
+CPU family may migrate only at a refreeze boundary, recorded in the trial ledger).
+
 ## Data storage
 
 `data/store/` (not in git, rebuildable at any time):

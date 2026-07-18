@@ -12,7 +12,9 @@ pytest>=8.0
 # imports it lazily and degrades gracefully if absent.
 curl_cffi>=0.7
 # ---- Cross-asset DL research program (plan §14) ----
-# torch: CPU build is sufficient (install with --index-url https://download.pytorch.org/whl/cpu)
+# torch in .venv: CPU build (--index-url https://download.pytorch.org/whl/cpu) — frozen
+# families depend on CPU determinism. GPU work lives in the separate venv-gpu (cu130,
+# GB10): see README "Two Python environments".
 torch>=2.6
 scikit-learn>=1.5
 statsmodels>=0.14
