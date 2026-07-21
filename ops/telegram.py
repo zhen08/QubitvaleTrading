@@ -22,16 +22,22 @@ def send(text: str) -> bool:
     if not token or not chat:
         log.info("telegram not configured; message:\n%s", text)
         return False
+
+    def _redact(s: str) -> str:  # the request URL embeds the bot token — never log it raw
+        return s.replace(token, "***") if token else s
+
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
             json={"chat_id": chat, "text": text[:4000]},
             timeout=30,
         )
-        if not r.ok:
-            log.warning("telegram send rejected: %s", r.text[:300])
-        r.raise_for_status()
-        return True
     except Exception as exc:  # noqa: BLE001 — 通知失败不阻断主流程
-        log.warning("telegram send failed: %s", exc)
+        log.warning("telegram send failed: %s", _redact(str(exc)))
         return False
+    if not r.ok:
+        # Telegram's JSON error body (error_code/description) is safe to log and tells us
+        # WHY it failed; the raised exception / URL would carry the token, so log neither.
+        log.warning("telegram send rejected: HTTP %s %s", r.status_code, _redact(r.text[:300]))
+        return False
+    return True

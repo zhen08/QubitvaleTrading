@@ -126,19 +126,36 @@ class Ledger:
         notional = abs(dq) * price
         if notional < max(min_trade_usdt, 1e-9):
             return None
-        fee = notional * fee_rate
+        # Round to the SAME precision that gets persisted, then mutate cash/positions
+        # from those rounded values. trades.parquet is the single source of truth and
+        # cash is replayed from it on every load; if in-memory state used full-precision
+        # notional/fee while the log stored rounded ones, replay drifted ~1e-5 from the
+        # snapshot and every reload logged a spurious "stale snapshot" warning. Using the
+        # persisted values here makes replay bit-identical to live state.
+        qty = round(abs(dq), 10)
+        notional = round(notional, 4)
+        fee = round(notional * fee_rate, 6)
+        # Cash-cap dust guard: rounding notional up to the 4dp grid can leave a
+        # cash-capped BUY a hair above available cash. Step it down one grid unit
+        # (one 1e-4 step always dominates the <5e-5 round-up) so cash never dips
+        # below the -1e-6 guard. Only the persisted `notional` moves; `qty` reflects
+        # the fill and is valued at mark, so no valuation inconsistency arises.
+        if dq > 0 and notional + fee > self.cash:
+            notional = round(notional - 1e-4, 4)
+            fee = round(notional * fee_rate, 6)
+        signed_dq = qty if dq > 0 else -qty
         if dq > 0:
             self.cash -= notional + fee
         else:
             self.cash += notional - fee
         assert self.cash > -1e-6, f"negative cash after trade: {self.cash}"
-        new_qty = cur + dq
+        new_qty = cur + signed_dq
         self.positions.pop(symbol, None) if abs(new_qty) < 1e-12 else \
             self.positions.__setitem__(symbol, new_qty)
 
         row = {"ts": str(ts), "day": day, "symbol": symbol,
-               "side": "buy" if dq > 0 else "sell", "qty": round(abs(dq), 10),
-               "price": price, "notional": round(notional, 4), "fee": round(fee, 6),
+               "side": "buy" if dq > 0 else "sell", "qty": qty,
+               "price": price, "notional": notional, "fee": fee,
                "mode": mode, "reason": reason}
         trades = self._read("trades.parquet")
         trades = pd.concat([trades, pd.DataFrame([row])], ignore_index=True) \
